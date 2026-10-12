@@ -1,67 +1,64 @@
-# ────────────────────────────────────────────────────────────
-# Bashtop Theme - Pure Black & White
-# True monochrome (no colors)
-# ────────────────────────────────────────────────────────────
+# Main background, empty for terminal default, need to be empty if you want transparent background
+theme[main_bg]="#11111b"
+theme_background=true
 
-# Background (leave empty for terminal’s black)
-theme[main_bg]=""
+# Main text color
+theme[main_fg]="#cad3f5"
 
-# Main text — white
-theme[main_fg]="#FFFFFF"
+# Title color for boxes
+theme[title]="#fab387"
 
-# Titles — light gray
-theme[title]="#C0C0C0"
+# Highlight color for keyboard shortcuts
+theme[hi_fg]="#fab387"
 
-# Highlight text — white
-theme[hi_fg]="#FFFFFF"
+# Background color of selected item in processes box
+theme[selected_bg]="#313244"
 
-# Selected item background — light gray
-theme[selected_bg]="#909090"
-theme[selected_fg]="#000000"     # black text on light background
+# Foreground color of selected item in processes box
+theme[selected_fg]="#cad3f5"
 
-# Dim/inactive text — dark gray
-theme[inactive_fg]="#666666"
+# Color of inactive/disabled text
+theme[inactive_fg]="#5b6078"
 
-# Misc info
-theme[proc_misc]="#B0B0B0"
+# Misc colors for processes box including mini cpu graphs, details memory graph and details status text
+theme[proc_misc]="#fab387"
 
-# Box outlines — mid gray
-theme[cpu_box]="#A0A0A0"
-theme[mem_box]="#A0A0A0"
-theme[net_box]="#A0A0A0"
-theme[proc_box]="#A0A0A0"
-theme[div_line]="#A0A0A0"
+# Box outline and divider line color
+theme[cpu_box]="#fab387"
+theme[mem_box]="#fab387"
+theme[net_box]="#fab387"
+theme[proc_box]="#fab387"
+theme[div_line]="#313244"
 
-# Graph gradients (white → gray → black)
-theme[temp_start]="#FFFFFF"
-theme[temp_mid]="#AAAAAA"
-theme[temp_end]="#000000"
+# Gradient for all meters and graphs
+theme[temp_start]="#fab387"
+theme[temp_mid]="#eed49f"
+theme[temp_end]="#a6da95"
 
-theme[cpu_start]="#FFFFFF"
-theme[cpu_mid]="#AAAAAA"
-theme[cpu_end]="#000000"
+theme[cpu_start]="#fab387"
+theme[cpu_mid]="#eed49f"
+theme[cpu_end]="#a6da95"
 
-theme[free_start]="#FFFFFF"
-theme[free_mid]="#AAAAAA"
-theme[free_end]="#000000"
+theme[free_start]="#8bd5ca"
+theme[free_mid]="#8aadf4"
+theme[free_end]="#8aadf4"
 
-theme[cached_start]="#FFFFFF"
-theme[cached_mid]="#AAAAAA"
-theme[cached_end]="#000000"
+theme[cached_start]="#8aadf4"
+theme[cached_mid]="#8aadf4"
+theme[cached_end]="#8bd5ca"
 
-theme[available_start]="#FFFFFF"
-theme[available_mid]="#AAAAAA"
-theme[available_end]="#000000"
+theme[available_start]="#a6da95"
+theme[available_mid]="#8bd5ca"
+theme[available_end]="#8bd5ca"
 
-theme[used_start]="#FFFFFF"
-theme[used_mid]="#AAAAAA"
-theme[used_end]="#000000"
+theme[used_start]="#fab387"
+theme[used_mid]="#eed49f"
+theme[used_end]="#ed8796"
 
-theme[download_start]="#FFFFFF"
-theme[download_mid]="#AAAAAA"
-theme[download_end]="#000000"
+theme[download_start]="#8aadf4"
+theme[download_mid]="#8aadf4"
+theme[download_end]="#8bd5ca"
 
-theme[upload_start]="#FFFFFF"
-theme[upload_mid]="#AAAAAA"
-theme[upload_end]="#000000"
-
+theme[upload_start]="#fab387"
+theme[upload_mid]="#eed49f"
+theme[upload_end]="#ed8796"

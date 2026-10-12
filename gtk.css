@@ -1,166 +1,330 @@
-    @define-color background     #000000;
-    @define-color foreground     #e6d9db;
-    @define-color black          #000000;
-    @define-color red            #D35F5F;
-    @define-color green          #FFC107;
-    @define-color yellow         #b91c1c;
-    @define-color blue           #e68e0d;
-    @define-color magenta        #D35F5F;
-    @define-color cyan           #bebebe;
-    @define-color white          #bebebe;
-    @define-color bright_black   #8a8a8d;
-    @define-color bright_red     #B91C1C;
-    @define-color bright_green   #FFC107;
-    @define-color bright_yellow  #b90a0a;
-    @define-color bright_blue    #f59e0b;
-    @define-color bright_magenta #B91C1C;
-    @define-color bright_cyan    #eaeaea;
-    @define-color bright_white   #ffffff;
+/* =============================================================================
+   OMARCHY THEME - GTK Coppernight - Fully Rounded & Smooth Glass
+   Rounding: 16px | Background #11111b | Accent #fab387
+   ============================================================================= */
 
-    @define-color accent_bg_color @blue;
-    @define-color accent_fg_color @background;
-    @define-color accent_color @cyan;
+@define-color background     #11111b;
+@define-color foreground     #cad3f5;
+@define-color black          #11111b;
+@define-color red            #ed8796;
+@define-color green          #a6da95;
+@define-color yellow         #eed49f;
+@define-color blue           #8aadf4;
+@define-color magenta        #c6a0f6;
+@define-color cyan           #8bd5ca;
+@define-color white          #cad3f5;
+@define-color bright_black   #313244;
+@define-color bright_red     #ed8796;
+@define-color bright_green   #a6da95;
+@define-color bright_yellow  #fab387;
+@define-color bright_blue    #8aadf4;
+@define-color bright_magenta #c6a0f6;
+@define-color bright_cyan    #8bd5ca;
+@define-color bright_white   #b8c0e0;
 
-    @define-color window_bg_color @background;
-    @define-color window_fg_color @foreground;
+@define-color accent_bg_color #fab387;
+@define-color accent_fg_color @background;
+@define-color accent_color #fab387;
 
-    @define-color view_bg_color @black;
-    @define-color view_fg_color @foreground;
-    @define-color sidebar_bg_color @black;
-    @define-color sidebar_fg_color @foreground;
-    @define-color sidebar_backdrop_color @black;
-    @define-color sidebar_shade_color @black;
+@define-color window_bg_color @background;
+@define-color window_fg_color @foreground;
 
-    @define-color headerbar_bg_color alpha(@foreground, 0.1);
-    @define-color headerbar_fg_color @foreground;
-    @define-color headerbar_backdrop_color @black;
-    @define-color headerbar_shade_color @black;
-    @define-color card_bg_color alpha(@foreground, 0.1);
-    @define-color card_fg_color @foreground;
+@define-color view_bg_color @background;
+@define-color view_fg_color @foreground;
+@define-color sidebar_bg_color @background;
+@define-color sidebar_fg_color @foreground;
 
-    @define-color popover_bg_color @black;
-    @define-color popover_fg_color @foreground;
+@define-color headerbar_bg_color alpha(@black, 0.72);
+@define-color headerbar_fg_color @foreground;
+@define-color headerbar_backdrop_color @background;
+@define-color headerbar_shade_color transparent;
+@define-color card_bg_color alpha(@bright_black, 0.4);
+@define-color card_fg_color @foreground;
 
-    @define-color destructive_bg_color @red;
-    @define-color destructive_fg_color @background;
+@define-color borders alpha(@bright_black, 0.8);
+@define-color headerbar_border_color alpha(@bright_yellow, 0.25);
 
-    @define-color success_bg_color @green;
-    @define-color success_fg_color @background;
+@define-color theme_fg_color @foreground;
+@define-color theme_text_color @foreground;
+@define-color theme_bg_color @background;
+@define-color theme_base_color @black;
+@define-color theme_selected_bg_color @blue;
+@define-color theme_selected_fg_color @background;
 
-    @define-color warning_bg_color @yellow;
-    @define-color warning_fg_color @background;
+/* ── Window & Dialog ── */
+window, dialog, messagedialog {
+  background-color: @background;
+  border-radius: 16px;
+}
 
-    @define-color error_bg_color @red;
-    @define-color error_fg_color @background;
+messagedialog {
+  border: 1px solid alpha(@bright_yellow, 0.35);
+  border-radius: 16px;
+}
 
-    @define-color dialog_bg_color @background;
-    @define-color dialog_fg_color @foreground;
+messagedialog label {
+  color: @foreground;
+  font-size: 14pt;
+  font-weight: bold;
+}
 
-    @define-color borders alpha(@foreground, 0.1);
+messagedialog button {
+  background-color: alpha(@bright_black, 0.6);
+  color: @foreground;
+  border: 1px solid alpha(@bright_black, 0.8);
+  padding: 10px 18px;
+  border-radius: 12px;
+  transition: all 180ms ease-out;
+}
 
-    @define-color theme_fg_color @foreground;
-    @define-color theme_text_color @foreground;
-    @define-color theme_bg_color @background;
-    @define-color theme_base_color @black;
-    @define-color theme_selected_bg_color @blue;
-    @define-color theme_selected_fg_color @background;
-    @define-color insensitive_bg_color @background;
-    @define-color insensitive_fg_color @bright_black;
-    @define-color insensitive_base_color @black;
-    @define-color theme_unfocused_fg_color @foreground;
-    @define-color theme_unfocused_text_color @foreground;
-    @define-color theme_unfocused_bg_color @background;
-    @define-color theme_unfocused_base_color @black;
-    @define-color theme_unfocused_selected_bg_color @blue;
-    @define-color theme_unfocused_selected_fg_color @background;
-    @define-color unfocused_insensitive_color @bright_black;
-    @define-color unfocused_borders alpha(@foreground, 0.1);
-    @define-color warning_color @yellow;
-    @define-color error_color @red;
-    @define-color success_color @green;
-    @define-color destructive_color @red;
+messagedialog button:hover {
+  background-color: #fab387;
+  color: @background;
+  border-color: #fab387;
+}
 
-    @define-color content_view_bg @black;
-    @define-color text_view_bg @black;
+/* ── Headerbar - top rounded only, smooth glass ── */
+headerbar {
+  background-color: alpha(@black, 0.72);
+  border-radius: 16px 16px 0 0;
+  border: 1px solid alpha(@bright_yellow, 0.18);
+  border-bottom: 1px solid alpha(@bright_black, 0.6);
+  box-shadow: 0 1px 3px alpha(black, 0.2);
+}
 
-    messagedialog {
-        background-color: @dialog_bg_color;
-    }
+headerbar:backdrop {
+  background-color: alpha(@black, 0.55);
+}
 
-    messagedialog label {
-        color: @dialog_fg_color;
-        font-size: 14pt;
-        font-weight: bold;
-    }
+/* ── Cards & Views - fully rounded ── */
+card {
+  background-color: alpha(@bright_black, 0.38);
+  border: 1px solid alpha(@bright_black, 0.5);
+  border-radius: 16px;
+  padding: 12px;
+}
 
-    messagedialog .secondary-text {
-        font-size: 10pt;
-        font-style: italic;
-    }
+view, textview, iconview {
+  border-radius: 12px;
+}
 
-    messagedialog button {
-        background-color: @black;
-        color: @foreground;
-        border: 1px solid @bright_black;
-        padding: 10px;
-    }
+/* ── Buttons - pill/rounded ── */
+button {
+  border-radius: 12px;
+  padding: 6px 14px;
+  border: 1px solid alpha(@bright_black, 0.6);
+  background-color: alpha(@bright_black, 0.35);
+  color: @foreground;
+  transition: all 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
 
-    messagedialog button:hover {
-        background-color: @blue;
-    }
+button:hover {
+  background-color: alpha(#fab387, 0.18);
+  border-color: alpha(#fab387, 0.5);
+}
 
-    banner revealer widget {
-        background: @bright_black;
-        padding: 5px;
-        color: @foreground;
-    }
+button:active {
+  background-color: alpha(#fab387, 0.28);
+}
 
-    alertdialog.background {
-        background-color: @dialog_bg_color;
-        color: @dialog_fg_color;
-    }
+button.suggested-action {
+  background-color: #fab387;
+  color: @background;
+  border-color: #fab387;
+  border-radius: 12px;
+}
 
-    alertdialog .titlebar {
-        background-color: @headerbar_bg_color;
-        color: @headerbar_fg_color;
-    }
+/* ── Entries & Search ── */
+entry, searchentry {
+  border-radius: 12px;
+  border: 1px solid alpha(@bright_black, 0.7);
+  background-color: alpha(@bright_black, 0.35);
+  padding: 8px 12px;
+  transition: all 160ms ease-out;
+}
 
-    alertdialog box {
-        background-color: @dialog_bg_color;
-    }
+entry:focus, searchentry:focus {
+  border-color: alpha(@bright_yellow, 0.7);
+  box-shadow: 0 0 0 2px alpha(@bright_yellow, 0.18);
+}
 
-    alertdialog label {
-        color: @dialog_fg_color;
-    }
+/* ── Popover & Menu - floating rounded ── */
+popover, popover contents, popover box {
+  border-radius: 16px;
+  background-color: alpha(@black, 0.94);
+  border: 1px solid alpha(@bright_black, 0.7);
+  box-shadow: 0 12px 28px alpha(black, 0.45), 0 4px 10px alpha(black, 0.25);
+  padding: 6px;
+}
 
-    filechooser .dialog-action-box {
-        border-top: 1px solid @bright_black;
-    }
+menu, menubar, context-menu {
+  border-radius: 14px;
+  background-color: alpha(@black, 0.96);
+  border: 1px solid alpha(@bright_black, 0.6);
+  padding: 6px;
+}
 
-    filechooser .dialog-action-box:backdrop {
-        border-top-color: @black;
-    }
+menuitem {
+  border-radius: 10px;
+  padding: 6px 12px;
+}
 
-    filechooser #pathbarbox {
-        border-bottom: 1px solid @bright_black;
-    }
+menuitem:hover {
+  background-color: alpha(#fab387, 0.18);
+}
 
-    filechooserbutton:drop(active) {
-        box-shadow: none;
-        border-color: transparent;
-    }
+/* ── Sidebar - rounded inset ── */
+sidebar, navigation-sidebar {
+  background-color: alpha(@black, 0.5);
+  border-radius: 12px;
+  margin: 6px;
+}
 
-    toast {
-        background-color: @black;
-        color: @foreground;
-    }
+sidebar row {
+  border-radius: 10px;
+  margin: 2px 6px;
+  padding: 6px 10px;
+}
 
-    toast button.circular.flat.image-button:hover {
-        color: @background;
-        background-color: @red;
-    }
+sidebar row:selected {
+  background-color: alpha(#fab387, 0.22);
+}
 
-    .svg-icon {
-        filter: invert(79%) sepia(18%) saturate(611%) hue-rotate(192deg)
-            brightness(103%) contrast(94%);
-    }
+/* ── Scrollbar - thin rounded ── */
+scrollbar slider {
+  border-radius: 999px;
+  background-color: alpha(@bright_black, 0.9);
+  min-width: 6px;
+  min-height: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+scrollbar slider:hover {
+  background-color: alpha(@bright_yellow, 0.85);
+}
+
+/* ── Toast & Notifications ── */
+toast {
+  background-color: alpha(@black, 0.92);
+  color: @foreground;
+  border: 1px solid alpha(@bright_yellow, 0.4);
+  border-radius: 14px;
+  box-shadow: 0 8px 20px alpha(black, 0.35);
+  margin: 8px;
+}
+
+/* ── Notebook / Tabs - rounded ── */
+notebook header tabs tab {
+  border-radius: 10px 10px 0 0;
+  padding: 8px 16px;
+  background-color: alpha(@bright_black, 0.3);
+  margin: 2px;
+}
+
+notebook header tabs tab:checked {
+  background-color: alpha(#fab387, 0.2);
+  border: 1px solid alpha(#fab387, 0.3);
+}
+
+/* ── Scale & Progress - rounded track ── */
+scale trough, progressbar trough {
+  border-radius: 999px;
+  background-color: alpha(@bright_black, 0.6);
+}
+
+scale highlight, progressbar progress {
+  border-radius: 999px;
+  background-color: #fab387;
+}
+
+scale slider {
+  border-radius: 999px;
+  background-color: @foreground;
+  border: 2px solid #fab387;
+}
+
+/* ── Switch - pill ── */
+switch {
+  border-radius: 999px;
+  background-color: alpha(@bright_black, 0.7);
+}
+
+switch:checked {
+  background-color: #fab387;
+}
+
+switch slider {
+  border-radius: 999px;
+  background-color: @foreground;
+}
+
+/* ── List rows - rounded ── */
+list row {
+  border-radius: 10px;
+  margin: 2px 6px;
+}
+
+list row:hover {
+  background-color: alpha(@bright_black, 0.35);
+}
+
+/* ── Tooltip - rounded ── */
+tooltip {
+  border-radius: 10px;
+  background-color: alpha(@black, 0.92);
+  border: 1px solid alpha(@bright_black, 0.6);
+}
+
+/* ── Smooth transitions globally ── */
+* {
+  -gtk-outline-radius: 14px;
+}
+
+.svg-icon {
+  filter: sepia(100%) saturate(300%) hue-rotate(190deg) brightness(90%) contrast(100%);
+}
+
+/* ── Nautilus file manager - copper accent ── */
+.nautilus-window placessidebar {
+  background-color: alpha(@black, 0.5);
+}
+
+.nautilus-window placessidebar row {
+  border-radius: 10px;
+  margin: 2px 6px;
+  padding: 6px 10px;
+}
+
+.nautilus-window placessidebar row:selected {
+  background-color: alpha(#fab387, 0.22);
+}
+
+.nautilus-window placessidebar row:selected label {
+  color: @foreground;
+}
+
+.nautilus-window .sidebar-button:selected,
+.nautilus-window flap > box > button:selected {
+  background-color: alpha(#fab387, 0.22);
+}
+
+.nautilus-window gridview child:selected,
+.nautilus-window columnview row:selected {
+  background-color: alpha(#fab387, 0.25);
+}
+
+.nautilus-window statusbar {
+  border-top: 1px solid alpha(@bright_black, 0.6);
+}
+
+.nautilus-window .floating-bar {
+  background-color: alpha(@black, 0.92);
+  border: 1px solid alpha(#fab387, 0.4);
+  border-radius: 14px;
+}
+
+.nautilus-window searchentry:focus {
+  border-color: alpha(#fab387, 0.7);
+  box-shadow: 0 0 0 2px alpha(#fab387, 0.18);
+}
