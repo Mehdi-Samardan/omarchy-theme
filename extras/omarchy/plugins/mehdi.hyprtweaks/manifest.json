@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "mehdi.hyprtweaks",
+  "name": "Hyprland Tweaks",
+  "version": "1.0.0",
+  "author": "mehdi",
+  "description": "Live control of Hyprland rounding, borders, gaps, blur, shadow and animations",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Hyprland Tweaks",
+    "description": "Live control of Hyprland rounding, borders, gaps, blur, shadow and animations",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
