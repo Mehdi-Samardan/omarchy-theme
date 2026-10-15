@@ -75,19 +75,33 @@ Icons of your open apps on the left of the bar, next to the workspaces.
 ### Video Downloader bar widget
 A download icon on the right of the bar. Click it, paste a link and pick a quality.
 
+**Videos**
 - If your clipboard already holds a link, it's filled in when the panel opens.
 - Shows the title, thumbnail, channel and length, then the qualities on offer:
   - **Best**: the highest resolution and bitrate the site has.
   - **Each resolution** (e.g. `1080p60 · 7.4 Mbps · ~600 MB`): the highest-bitrate stream at that height, saved as MP4.
-  - **MP3**: 320 kbps. **Original**: the site's own audio track, without re-encoding.
+  - **MP3** at 320 kbps, or **Original**: the site's own audio track, without re-encoding.
+- **Subtitles:** pick languages and they're saved as separate `.srt` files next to the video. Your languages (set in Settings) come first, including auto-generated ones.
 - Files get the title, channel, date and chapters embedded, and the thumbnail as cover art.
-- **Several downloads at once:** up to 3 run in parallel, the rest queue. Keep pasting links while they run; each quality gets its own file name.
+
+**Playlists and channels**
+- Paste a playlist or channel link to see its videos with thumbnails and lengths. Tick the ones you want (or select all), pick one quality and download them all; videos you already have are skipped.
+
+**Downloads**
+- Up to 3 run at once (configurable), the rest queue. Keep pasting links while they run; each quality gets its own file name.
 - Every download gets a card with its thumbnail, quality badge, MB done / total, speed, time left and percentage. The progress counts video and audio together in bytes, so it climbs once from 0 to 100%.
 - **Pause / Resume** continues from where it stopped. **Cancel** leaves nothing behind. Plus **Play**, **Show in folder**, **Retry**, **Remove** and **Clear finished**.
-- The list is saved, so it survives restarts and logouts; paused downloads can be resumed later, and moved or deleted files are marked.
-- Downloads keep running when the panel is closed. The bar icon shows the overall percentage, the list header the total speed, and a notification fires when each one finishes. When one finishes, the link and qualities at the top clear for the next link.
-- Errors are explained in plain words (private video, age-restricted, not available in your country, …).
-- Saves to `~/Videos/Downloads`. Works with YouTube, X, Instagram, TikTok and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports.
+- **Shrink for sharing:** a finished video can be re-encoded to fit Discord (10 MB), WhatsApp (16 MB), email (25 MB) or 50 MB, or turned into a GIF of its first 15 seconds. Uses the NVIDIA encoder when there is one.
+- **Already downloaded?** Picking a quality you already have offers to open it or show it in its folder instead.
+- **Disk space:** a download that won't fit on the disk asks before it starts.
+- The list survives restarts and logouts; paused downloads can be resumed later, and moved or deleted files are marked.
+- Downloads keep running when the panel is closed. The bar icon shows the overall percentage, the list header the total speed, and a notification fires when each one finishes.
+
+**Settings** (gear icon): save folder, downloads at once (1 to 5), default quality, speed limit per download, subtitle languages, and the yt-dlp version.
+
+**When something fails**, the error is in plain words (private video, age-restricted, not available in your country, …). When an old yt-dlp is the likely cause, the card offers an **Update** button that runs `omarchy update` in a terminal.
+
+Saves to `~/Videos/Downloads` by default. Works with YouTube, X, Instagram, TikTok and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports.
 
 Needs `yt-dlp` and `ffmpeg`. Optional, for sites that refuse or need your login, and for cover art on Opus audio:
 

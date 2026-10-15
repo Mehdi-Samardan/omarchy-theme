@@ -1,39 +1,56 @@
 #!/usr/bin/env python3
-# Helper for the mehdi.downloader bar widget, wrapping yt-dlp.
+# Helper for the mehdi.downloader bar widget, wrapping yt-dlp and ffmpeg.
 #
-#   downloader.py info <url>
-#       Prints one JSON line: title, uploader, duration, thumbnail, the video
-#       heights on offer (each with its best fps, bitrate and an estimated
-#       size), the best audio, and "extra": yt-dlp options the site needed
-#       (browser cookies, browser impersonation). Or {"error": "..."}.
-#       When a site refuses, it retries once with your browser's cookies and
-#       a browser fingerprint, when those are available.
+#   downloader.py info <url> [<dir>]
+#       Prints one JSON line. For a single video: title, uploader, duration,
+#       thumbnail, the heights on offer (best fps, bitrate and an estimated
+#       size for each), the best audio, the subtitle languages, the free space
+#       in <dir>, and "extra": yt-dlp options the site needed (browser
+#       cookies, browser impersonation). For a playlist or channel:
+#       {"playlist": true, title, uploader, count, entries: [{url, title, ...}]}.
+#       On failure {"error": "...", "outdated": <days>} (outdated only when an
+#       old yt-dlp is the likely cause). A site that refuses is retried once
+#       with your browser's cookies and fingerprint, when those are available.
 #
-#   downloader.py download <url> <best|height|mp3|audio> <dir> [<work dir>] [<extra JSON>]
+#   downloader.py download <url> <best|height|mp3|audio> <dir> [<work dir>] [<extra JSON>] [<options JSON>]
 #       best = highest resolution and bitrate, <height> = the highest-bitrate
 #       stream at that height, mp3 = 320 kbps MP3, audio = the original audio
 #       track without re-encoding. <extra JSON> is the "extra" list from info.
-#       Downloads to <dir> and prints progress lines the widget parses:
-#         progress <percent> <done bytes> <total bytes> <speed B/s> <eta s> <part> <parts>
-#         stage <text>            (merging, converting to mp3, ...)
-#         done <file path>
-#         error <message>
-#       The percentage covers every stream yt-dlp fetches (YouTube sends video
-#       and audio separately), measured in bytes, so it climbs once from 0 to
-#       100 instead of restarting per stream. Speed is smoothed and the time
-#       left is the remaining bytes over that speed.
-#       Files are named "<title> [<id>] <height>p.mp4" (or .mp3), so several
-#       resolutions of one video can download side by side. Work-in-progress
-#       files live in a work folder (<work dir>, or a fresh temp folder) that is
-#       removed when the download ends or is cancelled (SIGTERM), so a cancel
-#       leaves nothing behind. Pause = create <work dir>/.paused, then SIGTERM:
-#       the folder is kept and the same command later resumes from it.
-#       Files get the title, channel, date and chapters embedded, plus the
-#       thumbnail as cover art.
-import json, os, re, shutil, signal, subprocess, sys, tempfile, time
+#       <options JSON>: {"subs": ["tr", "en"], "rate": "5M"} saves those
+#       subtitles as separate .srt files next to the video and caps the speed.
+#
+#   downloader.py shrink <file> <megabytes|gif>
+#       Re-encodes a finished download to fit a size (Discord, WhatsApp, ...)
+#       as "<name> (<n> MB).mp4", or makes "<name>.gif" from its first 15 s.
+#
+#   Download and shrink print lines the widget parses:
+#     progress <percent> <done bytes> <total bytes> <speed B/s> <eta s> <part> <parts>
+#     stage <text>            (merging, converting, encoding, ...)
+#     done <file path>
+#     outdated <days>         (before an error that an old yt-dlp likely caused)
+#     error <message>
+#
+#   Download progress covers every stream yt-dlp fetches (YouTube sends video
+#   and audio separately), measured in bytes, so it climbs once from 0 to 100.
+#   Files are named "<title> [<id>] <height>p.mp4" (or .mp3/.m4a/...), so
+#   several qualities of one video can download side by side. Work files live
+#   in <work dir> (or a fresh temp folder), removed when the download ends or
+#   is cancelled (SIGTERM). Pause = create <work dir>/.paused, then SIGTERM: the
+#   folder is kept and the same command later resumes from it. Files get the
+#   title, channel, date and chapters embedded, plus the thumbnail as cover art.
+import datetime, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 
 def ytdlp(*args):
     return ["yt-dlp", "--no-playlist", "--no-warnings", *args]
+
+def num(v):
+    try: return float(v)
+    except (TypeError, ValueError): return None
+
+def emit(*fields):
+    print(" ".join(str(f) for f in fields), flush=True)
+
+# ---------- Errors ----------
 
 # yt-dlp's errors, in plain words.
 FRIENDLY = [
@@ -43,11 +60,11 @@ FRIENDLY = [
     (r"members.only|Join this channel", "Members-only video"),
     (r"live event will begin|Premieres in", "This video hasn't started yet"),
     (r"Unsupported URL", "This site or link isn't supported"),
-    (r"Requested format is not available", "That resolution isn't available anymore"),
+    (r"Requested format is not available", "That quality isn't available anymore"),
     (r"HTTP Error 404|Not Found", "Nothing found at this link (404)"),
     (r"HTTP Error 403|Forbidden", "The site refused the download (403)"),
     (r"HTTP Error 429|Too Many Requests", "Too many requests, try again in a bit"),
-    (r"Video unavailable|has been removed|no longer available", "Video unavailable"),
+    (r"Video unavailable|is unavailable|has been removed|no longer available", "Video unavailable"),
     (r"geo|not available in your country", "Not available in your country"),
     (r"Unable to download webpage|Name or service not known|timed out|Connection", "Couldn't reach the site, check your connection"),
     (r"No space left", "Not enough disk space"),
@@ -58,6 +75,24 @@ def friendly(msg):
     for pattern, text in FRIENDLY:
         if re.search(pattern, msg, re.I): return text
     return re.sub(r"^\[[^\]]+\]\s*[^:]*:\s*", "", msg) or "Download failed"
+
+# Errors that a newer yt-dlp typically fixes (sites change, yt-dlp follows).
+EXTRACTOR_BREAKAGE = r"Unable to extract|nsig|signature|Requested format is not available|HTTP Error 403|not a bot|Unsupported URL|KeyError|NoneType|unable to download video data"
+
+def ytdlp_age_days():
+    try:
+        v = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True).stdout.strip()
+        y, m, d = (int(x) for x in v.split(".")[:3])
+        return (datetime.date.today() - datetime.date(y, m, d)).days
+    except Exception:
+        return 0
+
+def outdated_days(err):
+    """Days since this yt-dlp was released, when it's old and the error smells like it."""
+    age = ytdlp_age_days()
+    return age if age >= 30 and re.search(EXTRACTOR_BREAKAGE, err or "", re.I) else 0
+
+# ---------- Info ----------
 
 def browser_extras():
     """yt-dlp options that make requests look like your browser, if available."""
@@ -82,13 +117,40 @@ def browser_extras():
 RETRYABLE = r"sign.?in|log.?in|not a bot|confirm your age|HTTP Error 40[13]|Forbidden|cloudflare|Unsupported URL|Unable to extract|private"
 
 def probe(url, extra):
-    p = subprocess.run(ytdlp("-J", *extra, url), capture_output=True, text=True)
+    # --flat-playlist keeps playlists and channels fast (entries, not full info).
+    p = subprocess.run(ytdlp("-J", "--flat-playlist", *extra, url), capture_output=True, text=True)
     if p.returncode != 0:
         return None, (p.stderr.strip().splitlines() or ["yt-dlp failed"])[-1]
     try: return json.loads(p.stdout), None
     except ValueError: return None, "yt-dlp returned no data"
 
-def info(url):
+def free_bytes(path):
+    path = os.path.abspath(path or os.path.expanduser("~"))
+    while not os.path.isdir(path) and path != "/": path = os.path.dirname(path)
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+
+def thumb_of(d):
+    if d.get("thumbnail"): return d["thumbnail"]
+    thumbs = [t for t in d.get("thumbnails") or [] if t.get("url")]
+    return max(thumbs, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))["url"] if thumbs else ""
+
+def playlist_info(d, extra, outdir):
+    entries = []
+    for e in (d.get("entries") or [])[:300]:
+        if not e: continue
+        u = e.get("url") or e.get("webpage_url")
+        if not u: continue
+        if not re.match(r"https?://", u) and e.get("ie_key") == "Youtube":
+            u = "https://www.youtube.com/watch?v=" + u
+        entries.append({"url": u, "title": e.get("title") or u, "duration": e.get("duration") or 0,
+                        "uploader": e.get("uploader") or e.get("channel") or "", "thumbnail": thumb_of(e)})
+    return {"playlist": True, "title": d.get("title") or "Playlist",
+            "uploader": d.get("uploader") or d.get("channel") or "", "count": len(entries),
+            "thumbnail": thumb_of(d) or (entries[0]["thumbnail"] if entries else ""),
+            "entries": entries, "extra": extra, "freeBytes": free_bytes(outdir)}
+
+def info(url, outdir=None):
     extra = []
     d, err = probe(url, extra)
     if d is None and re.search(RETRYABLE, err, re.I):
@@ -98,7 +160,10 @@ def info(url):
         hint = ""
         if re.search(RETRYABLE, err, re.I) and not browser_extras():
             hint = " (install python-secretstorage and python-curl_cffi to let it use your browser login)"
-        print(json.dumps({"error": friendly(err) + hint})); return
+        print(json.dumps({"error": friendly(err) + hint, "outdated": outdated_days(err)})); return
+
+    if d.get("_type") in ("playlist", "multi_video") and d.get("entries") is not None:
+        print(json.dumps(playlist_info(d, extra, outdir))); return
 
     duration = d.get("duration") or 0
     fmts = d.get("formats") or [d]
@@ -123,24 +188,32 @@ def info(url):
             heights[h] = {"height": h, "fps": round(f.get("fps") or 0), "kbps": round(rate),
                           "size": size(f) + (audio_size if f.get("acodec") in (None, "none") and best_audio else 0)}
     known = [heights[h] for h in sorted(heights, reverse=True) if h]
+
+    # Subtitles: every manual track, plus auto-generated ones (the widget shows
+    # the auto tracks for your languages and the original-language one).
+    subs = sorted(k for k in (d.get("subtitles") or {}) if k != "live_chat")
+    auto = sorted(k for k in (d.get("automatic_captions") or {}))
     print(json.dumps({
         "title": d.get("title") or url,
         "uploader": d.get("uploader") or d.get("channel") or d.get("extractor_key") or "",
         "duration": duration,
-        "thumbnail": d.get("thumbnail") or "",
+        "thumbnail": thumb_of(d),
         "hasVideo": bool(heights),
         "heights": known,
         "best": known[0] if known else heights.get(0),
         "audio": {"codec": (best_audio or {}).get("acodec", "").split(".")[0], "kbps": round((best_audio or {}).get("abr") or 0),
                   "size": audio_size} if best_audio or not heights else None,
+        "subtitles": subs,
+        "autoSubtitles": [k for k in auto if k.endswith("-orig")] + [k for k in auto if not k.endswith("-orig")],
+        "language": d.get("language") or "",
+        "freeBytes": free_bytes(outdir),
         "extra": extra,
     }))
 
-def num(v):
-    try: return float(v)
-    except (TypeError, ValueError): return None
+# ---------- Download ----------
 
-def download(url, quality, outdir, workdir=None, extra=None):
+def download(url, quality, outdir, workdir=None, extra=None, options=None):
+    options = options or {}
     outdir = os.path.abspath(outdir)
     os.makedirs(outdir, exist_ok=True)
     if workdir:
@@ -175,6 +248,12 @@ def download(url, quality, outdir, workdir=None, extra=None):
         h = int(quality)
         args += ["-f", f"bv*[height<={h}]+ba/b[height<={h}]/b", "-S", f"res:{h},fps,vbr,abr,asr",
                  "--merge-output-format", "mp4"]
+    # Subtitles as separate .srt files next to the video (manual ones win over auto).
+    subs = [s for s in options.get("subs") or [] if re.fullmatch(r"[\w-]+", s)]
+    if subs and quality not in ("mp3", "audio"):
+        args += ["--write-subs", "--write-auto-subs", "--sub-langs", ",".join(subs), "--convert-subs", "srt"]
+    if options.get("rate") and re.fullmatch(r"\d+(\.\d+)?[KMG]?", str(options["rate"])):
+        args += ["--limit-rate", str(options["rate"])]
     # Cover art: ffmpeg handles mp4/mp3/m4a; Opus/Ogg/WebM need mutagen.
     try:
         import mutagen  # noqa: F401
@@ -189,7 +268,7 @@ def download(url, quality, outdir, workdir=None, extra=None):
     last_emit = 0.0
     finishing = False   # every stream downloaded, post-processing running
 
-    def emit(force=False):
+    def report(force=False):
         nonlocal last_emit
         now = time.monotonic()
         if not force and now - last_emit < 0.25: return
@@ -199,7 +278,7 @@ def download(url, quality, outdir, workdir=None, extra=None):
         pct = min(99.9, done * 100 / total) if total else 0
         eta = (total - done) / speed if speed and total > done else 0
         active = next((i for i, f in enumerate(order) if parts[f]["done"] < parts[f]["total"]), len(order) - 1)
-        print(f"progress {pct:.1f} {int(done)} {int(total)} {int(speed or 0)} {int(eta)} {active + 1} {len(order)}", flush=True)
+        emit("progress", f"{pct:.1f}", int(done), int(total), int(speed or 0), int(eta), active + 1, len(order))
 
     p = subprocess.Popen(ytdlp(*args, url), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
@@ -225,8 +304,8 @@ def download(url, quality, outdir, workdir=None, extra=None):
                     values.append(v)
                     rest = rest[end:].lstrip()
             except ValueError:
-                values += [None] * (5 - len(values))
-            if len(values) < 5: values += [None] * (5 - len(values))
+                pass
+            values += [None] * (5 - len(values))
             ids, sizes, approx, single_id, single_size = values
             if isinstance(ids, list) and ids:
                 # yt-dlp drops unknown sizes from these lists, so only trust them
@@ -238,7 +317,7 @@ def download(url, quality, outdir, workdir=None, extra=None):
             elif single_id not in (None, "NA"):
                 order.append(str(single_id))
                 parts[str(single_id)] = {"done": 0, "total": num(single_size) or 0}
-            emit(force=True)
+            report(force=True)
         elif line.startswith("progress "):
             f, got, tot, est, spd, frag_i, frag_n = (line.split(" ") + ["NA"] * 8)[1:8]
             if f not in parts:
@@ -253,39 +332,123 @@ def download(url, quality, outdir, workdir=None, extra=None):
                 part["done"] = part["total"] * num(frag_i) / num(frag_n)
             s_ = num(spd)
             if s_: speed = s_ if speed is None else speed * 0.8 + s_ * 0.2
-            emit()
+            report()
             # yt-dlp stays quiet about post-processing, so announce it once every
             # stream is in: merging two streams or converting audio takes a moment.
             if not finishing and order and all(parts[x]["total"] and parts[x]["done"] >= parts[x]["total"] for x in order):
                 finishing = True
-                emit(force=True)
-                if quality == "mp3": print("stage converting to mp3", flush=True)
-                elif quality == "audio": print("stage extracting the audio", flush=True)
-                elif len(order) > 1: print("stage merging video and audio", flush=True)
-                else: print("stage finishing the file", flush=True)
+                report(force=True)
+                if quality == "mp3": emit("stage converting to mp3")
+                elif quality == "audio": emit("stage extracting the audio")
+                elif len(order) > 1: emit("stage merging video and audio")
+                else: emit("stage finishing the file")
         elif line.startswith("done "):
-            for part in parts.values(): part["done"] = part["total"] = max(part["done"], part["total"])
-            print(re.sub(r"\s+", " ", line), flush=True)
-        elif line.startswith("[Merger]"):
-            print("stage merging video and audio", flush=True)
-        elif line.startswith("[ExtractAudio]"):
-            print("stage converting to mp3", flush=True)
-        elif line.startswith(("[FixupM3u8]", "[FixupM4a]", "[VideoConvertor]", "[VideoRemuxer]")):
-            print("stage finishing the file", flush=True)
-        elif line.startswith("[EmbedThumbnail]") or line.startswith("[Metadata]"):
-            print("stage adding cover and details", flush=True)
+            emit(re.sub(r"\s+", " ", line))
         elif line.startswith("ERROR:"):
             last_err = line[6:].strip()
     code = p.wait()
     shutil.rmtree(tmp, ignore_errors=True)
     if code != 0:
-        print("error " + friendly(last_err), flush=True)
+        days = outdated_days(last_err)
+        if days: emit("outdated", days)
+        emit("error", friendly(last_err))
+
+# ---------- Shrink / GIF ----------
+
+def probe_duration(path):
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                         capture_output=True, text=True).stdout.strip()
+    return num(out) or 0
+
+def has_encoder(name):
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    return f" {name} " in out
+
+def run_ffmpeg(cmd, seconds, label):
+    """Run ffmpeg with -progress on stdout and turn it into progress lines."""
+    p = subprocess.Popen(cmd + ["-progress", "pipe:1", "-nostats", "-loglevel", "error"],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+
+    def stop(*_):
+        p.terminate()
+        try: p.wait(5)
+        except subprocess.TimeoutExpired: p.kill()
+        try: os.remove(cmd[-1])
+        except OSError: pass
+        sys.exit(130)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    start, last = time.monotonic(), 0.0
+    for line in p.stdout:
+        if line.startswith("out_time_us="):
+            t = (num(line.split("=", 1)[1]) or 0) / 1e6
+            pct = min(99.9, t * 100 / seconds) if seconds else 0
+            now = time.monotonic()
+            if now - last >= 0.25:
+                last = now
+                elapsed = now - start
+                eta = elapsed * (100 - pct) / pct if pct > 0 else 0
+                emit("progress", f"{pct:.1f}", 0, 0, 0, int(eta), 0, 0)
+    err = p.stderr.read().strip()
+    return p.wait(), err
+
+def shrink(path, target):
+    if not os.path.isfile(path):
+        emit("error", "The file isn't there anymore"); return
+    duration = probe_duration(path)
+    base = os.path.splitext(path)[0]
+    emit("stage", "encoding")
+
+    if target == "gif":
+        seconds = min(15, duration or 15)
+        out = base + ".gif"
+        vf = ("fps=12,scale=480:-2:flags=lanczos,split[a][b];"
+              "[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4")
+        code, err = run_ffmpeg(["ffmpeg", "-y", "-t", str(seconds), "-i", path, "-vf", vf, "-loop", "0", out],
+                               seconds, "gif")
+        if code != 0: emit("error", "GIF failed: " + (err.splitlines() or ["ffmpeg error"])[-1]); return
+        emit("done", out); return
+
+    mb = float(target)
+    if not duration:
+        emit("error", "Can't read the video length"); return
+    budget = mb * 1000 * 1000 * 8 * 0.94          # bits, with headroom for the container
+    audio = 96_000 if budget / duration > 600_000 else 64_000
+    out = f"{base} ({mb:g} MB).mp4"
+    factor = 1.0
+    for attempt in range(2):
+        vbit = int((budget / duration - audio) * factor)
+        if vbit < 120_000:
+            need = (120_000 + audio) * duration / 8 / 1e6 / 0.94
+            emit("error", f"Too long to fit in {mb:g} MB (needs about {need:.0f} MB)"); return
+        height = 1080 if vbit > 4_500_000 else 720 if vbit > 1_800_000 else 480 if vbit > 800_000 else 360
+        vf = f"scale=-2:'min({height},ih)'"
+        if has_encoder("h264_nvenc"):
+            venc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "cbr", "-b:v", str(vbit),
+                    "-maxrate", str(vbit), "-bufsize", str(vbit * 2)]
+        else:
+            venc = ["-c:v", "libx264", "-preset", "medium", "-b:v", str(vbit),
+                    "-maxrate", str(int(vbit * 1.3)), "-bufsize", str(vbit * 2)]
+        cmd = ["ffmpeg", "-y", "-i", path, "-vf", vf, *venc, "-c:a", "aac", "-b:a", str(audio),
+               "-movflags", "+faststart", out]
+        code, err = run_ffmpeg(cmd, duration, "shrink")
+        if code != 0:
+            emit("error", "Shrinking failed: " + (err.splitlines() or ["ffmpeg error"])[-1]); return
+        if os.path.getsize(out) <= mb * 1000 * 1000: break
+        factor *= 0.85                             # came out too big: one more, tighter pass
+    emit("done", out)
 
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "info":
-        info(sys.argv[2])
-    elif len(sys.argv) >= 5 and sys.argv[1] == "download":
-        download(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None,
-                 json.loads(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None)
+    a = sys.argv
+    if len(a) >= 3 and a[1] == "info":
+        info(a[2], a[3] if len(a) > 3 else None)
+    elif len(a) >= 5 and a[1] == "download":
+        download(a[2], a[3], a[4], a[5] if len(a) > 5 and a[5] else None,
+                 json.loads(a[6]) if len(a) > 6 and a[6] else None,
+                 json.loads(a[7]) if len(a) > 7 and a[7] else None)
+    elif len(a) >= 4 and a[1] == "shrink":
+        shrink(a[2], a[3])
     else:
-        sys.exit("usage: downloader.py info <url> | download <url> <best|height|mp3|audio> <dir> [<work dir>] [<extra JSON>]")
+        sys.exit("usage: downloader.py info <url> [<dir>] | download <url> <best|height|mp3|audio> <dir> "
+                 "[<work dir>] [<extra JSON>] [<options JSON>] | shrink <file> <megabytes|gif>")
