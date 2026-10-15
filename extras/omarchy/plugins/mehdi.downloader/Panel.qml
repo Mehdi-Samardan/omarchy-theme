@@ -4,11 +4,14 @@ import Quickshell.Io
 import qs.Ui
 import qs.Commons
 
-// Paste a link, pick a resolution (or audio-only mp3) and download it with
-// yt-dlp through downloader.py. Every download becomes a card in the list at
-// the bottom with its thumbnail, progress, speed and time left. Up to
-// maxParallel downloads run at once, the rest wait in a queue, and they keep
-// running when the panel is closed (the bar icon shows the overall progress).
+// Paste a link, pick a quality and download it with yt-dlp through
+// downloader.py: Best (highest resolution and bitrate), a specific height
+// (highest bitrate at that height), MP3 320 kbps or the original audio.
+// Every download becomes a card at the bottom with its thumbnail, progress,
+// speed and time left, and can be paused, resumed, cancelled or retried.
+// Up to maxParallel run at once, the rest queue; they keep running when the
+// panel is closed. The list is saved to historyPath, so it survives restarts
+// (paused downloads can be resumed later).
 Panel {
   id: root
   moduleName: "mehdi.downloader"
@@ -20,6 +23,8 @@ Panel {
   readonly property color okColor: "#a6da95"
   readonly property color errorColor: "#ed8796"
   readonly property color dimText: Qt.darker(bar.foreground, 1.45)
+  readonly property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/downloader-history.json"
+  readonly property int historyLimit: 40
 
   // ---------- Link lookup ----------
   property string lookupStatus: "idle"   // idle | loading | ready | error
@@ -36,6 +41,7 @@ Panel {
   readonly property var activeJobs: jobs.filter(function(j) { return j.phase === "running" || j.phase === "finishing" })
   readonly property int queuedCount: jobs.filter(function(j) { return j.phase === "queued" }).length
   readonly property bool hasFinished: jobs.some(function(j) { return j.finished })
+  readonly property real totalSpeed: activeJobs.reduce(function(sum, j) { return sum + (j.phase === "running" ? j.speedBytes : 0) }, 0)
   readonly property real overallPercent: {
     var done = 0, total = 0
     for (var i = 0; i < activeJobs.length; i++) { done += activeJobs[i].doneBytes; total += activeJobs[i].totalBytes }
@@ -59,6 +65,11 @@ Panel {
     var h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60
     var mm = h > 0 && m < 10 ? "0" + m : String(m)
     return (h > 0 ? h + ":" : "") + mm + ":" + (s < 10 ? "0" : "") + s
+  }
+
+  function rate(kbps) {
+    if (!kbps) return ""
+    return kbps >= 1000 ? (kbps / 1000).toFixed(kbps >= 10000 ? 0 : 1) + " Mbps" : kbps + " kbps"
   }
 
   function heightTag(h) {
@@ -87,11 +98,26 @@ Panel {
     try { d = JSON.parse(raw) } catch (e) { d = { error: "Could not read yt-dlp output" } }
     if (!d || d.error) { lookupStatus = "error"; lookupError = d ? d.error : "Unknown error"; return }
     var opts = []
-    for (var i = 0; i < d.heights.length; i++) {
-      var h = d.heights[i]
-      opts.push({ quality: String(h.height), label: h.height + "p", tag: heightTag(h.height), detail: humanSize(h.size) })
+    if (d.hasVideo) {
+      var b = d.best || {}
+      opts.push({ quality: "best", label: "Best", tag: b.height ? heightTag(b.height) || b.height + "p" : "MAX",
+                  detail: [b.height ? b.height + "p" + (b.fps > 30 ? b.fps : "") : "", humanSize(b.size)]
+                          .filter(function(x) { return x }).join(" · ") || "highest available",
+                  badge: b.height ? b.height + "p" : "Best" })
+      for (var i = 0; i < d.heights.length; i++) {
+        var h = d.heights[i]
+        opts.push({ quality: String(h.height), label: h.height + "p" + (h.fps > 30 ? h.fps : ""), tag: heightTag(h.height),
+                    detail: [rate(h.kbps), humanSize(h.size)].filter(function(x) { return x }).join(" · "),
+                    badge: h.height + "p" })
+      }
     }
-    opts.push({ quality: "audio", label: "Audio", tag: "MP3", detail: humanSize(d.audioSize) })
+    if (d.audio) {
+      opts.push({ quality: "mp3", label: "MP3", tag: "320", detail: "320 kbps" + (d.audio.size ? " · " + humanSize(d.audio.size) : ""),
+                  badge: "MP3", audio: true })
+      opts.push({ quality: "audio", label: "Original", tag: (d.audio.codec || "").toUpperCase().replace("MP4A", "AAC"),
+                  detail: [rate(d.audio.kbps), "no re-encode"].filter(function(x) { return x }).join(" · "),
+                  badge: "AUDIO", audio: true })
+    }
     info = d
     options = opts
     selectedIndex = 0
@@ -126,15 +152,15 @@ Panel {
     if (isQueuedOrRunning(url, o.quality)) return
     var job = jobComponent.createObject(root, {
       jobId: ++jobSerial, url: url, title: info.title, uploader: info.uploader,
-      thumbnail: info.thumbnail, quality: o.quality,
-      label: o.quality === "audio" ? "MP3" : o.label, estimate: o.detail
+      thumbnail: info.thumbnail, quality: o.quality, label: o.badge, extra: info.extra || [],
+      workDir: outDir + "/.downloading-" + Date.now().toString(36) + jobSerial
     })
     jobs = [job].concat(jobs)
     pumpQueue()
   }
 
   function pumpQueue() {
-    var running = jobs.filter(function(j) { return j.phase === "running" || j.phase === "finishing" }).length
+    var running = jobs.filter(function(j) { return j.phase === "running" || j.phase === "finishing" || j.phase === "pausing" }).length
     for (var i = jobs.length - 1; i >= 0 && running < maxParallel; i--) {
       if (jobs[i].phase === "queued") { jobs[i].start(); running++ }
     }
@@ -142,7 +168,7 @@ Panel {
   }
 
   function removeJob(job) {
-    job.cancel()
+    if (!job.finished) job.cancel()
     jobs = jobs.filter(function(j) { return j !== job })
     job.destroy()
     pumpQueue()
@@ -155,6 +181,78 @@ Panel {
       else keep.push(jobs[i])
     }
     jobs = keep
+    saveHistory()
+  }
+
+  // ---------- History: finished and paused downloads survive restarts ----------
+  readonly property var savedFields: ["url", "title", "uploader", "thumbnail", "quality", "label", "extra", "workDir",
+                                      "phase", "file", "error", "totalBytes", "doneBytes", "percent", "finishedAt"]
+
+  function saveHistory() { saveTimer.restart() }
+
+  Timer {
+    id: saveTimer
+    interval: 400
+    onTriggered: {
+      var out = []
+      for (var i = 0; i < root.jobs.length && out.length < root.historyLimit; i++) {
+        var j = root.jobs[i], rec = {}
+        if (!(j.finished || j.phase === "paused")) continue
+        for (var k = 0; k < root.savedFields.length; k++) rec[root.savedFields[k]] = j[root.savedFields[k]]
+        out.push(rec)
+      }
+      historyFile.setText(JSON.stringify(out, null, 2) + "\n")
+    }
+  }
+
+  property bool historyLoaded: false
+  function loadHistory(raw) {
+    if (historyLoaded) return
+    historyLoaded = true
+    var list = []
+    try { list = JSON.parse(raw) } catch (e) { list = [] }
+    if (!Array.isArray(list)) return
+    var restored = []
+    for (var i = 0; i < list.length; i++) {
+      var rec = list[i]
+      if (!rec || !rec.url) continue
+      rec.jobId = ++jobSerial
+      if (rec.phase === "running" || rec.phase === "finishing" || rec.phase === "queued") rec.phase = "paused"
+      restored.push(jobComponent.createObject(root, rec))
+    }
+    jobs = jobs.concat(restored)
+    checkFiles()
+  }
+
+  // Mark finished downloads whose file was moved or deleted.
+  function checkFiles() {
+    var done = jobs.filter(function(j) { return j.phase === "done" && j.file })
+    if (done.length === 0 || fileCheck.running) return
+    fileCheck.targets = done
+    fileCheck.command = ["sh", "-c", 'for f; do [ -e "$f" ] && echo 1 || echo 0; done', "check"]
+                        .concat(done.map(function(j) { return j.file }))
+    fileCheck.running = true
+  }
+
+  Process {
+    id: fileCheck
+    property var targets: []
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var flags = text.trim().split("\n")
+        for (var i = 0; i < fileCheck.targets.length; i++) fileCheck.targets[i].missing = flags[i] === "0"
+      }
+    }
+  }
+
+  FileView {
+    id: historyFile
+    path: root.historyPath
+    printErrors: false
+    onLoaded: root.loadHistory(text())
+    onLoadFailed: root.loadHistory("[]")
   }
 
   // One download: its own helper process and progress state.
@@ -170,10 +268,14 @@ Panel {
       property string thumbnail: ""
       property string quality: ""
       property string label: ""
-      property string estimate: ""
+      property var extra: []
+      property string workDir: ""
+      property bool missing: false
+      property string finishedAt: ""
 
-      // queued | running | finishing | done | error | cancelled
+      // queued | running | pausing | paused | finishing | done | error | cancelled
       property string phase: "queued"
+      onPhaseChanged: if (finished || phase === "paused") root.saveHistory()
       readonly property bool finished: phase === "done" || phase === "error" || phase === "cancelled"
       property real percent: 0
       property real shownPercent: 0
@@ -191,18 +293,37 @@ Panel {
 
       function start() {
         phase = "running"
-        proc.command = ["python3", root.helper, "download", url, quality, root.outDir]
+        speedBytes = 0; etaSeconds = 0; stage = ""
+        proc.command = ["python3", root.helper, "download", url, quality, root.outDir, workDir, JSON.stringify(extra || [])]
         proc.running = true
       }
 
+      // Pause keeps the work folder (the helper sees .paused) so resume continues from there.
+      function pause() {
+        if (phase !== "running") return
+        phase = "pausing"
+        Quickshell.execDetached(["sh", "-c", 'touch "$1/.paused" && kill -TERM "$2"', "pause", workDir, String(proc.processId)])
+      }
+
+      function resume() {
+        if (phase !== "paused") return
+        phase = "queued"
+        root.pumpQueue()
+      }
+
+      function discardWork() {
+        if (workDir.indexOf("/.downloading-") > 0)
+          Quickshell.execDetached(["rm", "-rf", "--", workDir])
+      }
+
       function cancel() {
-        if (phase === "running" || phase === "finishing") { phase = "cancelled"; proc.running = false }
-        else if (phase === "queued") phase = "cancelled"
+        if (phase === "running" || phase === "finishing" || phase === "pausing") { phase = "cancelled"; proc.running = false }
+        else if (phase === "queued" || phase === "paused") { phase = "cancelled"; discardWork() }
       }
 
       function retry() {
         percent = 0; shownPercent = 0; doneBytes = 0; totalBytes = 0; speedBytes = 0
-        etaSeconds = 0; part = 0; parts = 0; stage = ""; error = ""; file = ""
+        etaSeconds = 0; part = 0; parts = 0; stage = ""; error = ""; file = ""; missing = false
         phase = "queued"
         root.pumpQueue()
       }
@@ -226,6 +347,8 @@ Panel {
         } else if (kind === "done") {
           file = f.join(" ")
           percent = 100
+          doneBytes = totalBytes
+          finishedAt = new Date().toISOString()
           phase = "done"
           if (root.url === url && !root.jobs.some(function(j) { return j.url === url && !j.finished }))
             root.resetLookup()
@@ -244,7 +367,8 @@ Panel {
         running: false
         stdout: SplitParser { onRead: function(line) { job.handle(line) } }
         onExited: {
-          if (job.phase === "running" || job.phase === "finishing") { job.phase = "error"; job.error = "Download stopped" }
+          if (job.phase === "pausing") { job.phase = "paused"; job.speedBytes = 0 }
+          else if (job.phase === "running" || job.phase === "finishing") { job.phase = "error"; job.error = "Download stopped" }
           root.pumpQueue()
         }
       }
@@ -499,7 +623,7 @@ Panel {
                   anchors.horizontalCenter: parent.horizontalCenter
                   spacing: Style.space(6)
                   Text {
-                    text: (chip.modelData.quality === "audio" ? "󰝚 " : "") + chip.modelData.label
+                    text: (chip.modelData.audio ? "󰝚 " : chip.modelData.quality === "best" ? "󰓎 " : "") + chip.modelData.label
                     color: root.bar.foreground
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
@@ -547,6 +671,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             text: "DOWNLOADS" + (root.activeJobs.length > 0 ? "  ·  " + root.activeJobs.length + " ACTIVE" : "")
                   + (root.queuedCount > 0 ? "  ·  " + root.queuedCount + " QUEUED" : "")
+                  + (root.totalSpeed > 0 ? "  ·  " + root.humanBytes(root.totalSpeed).toUpperCase() + "/S" : "")
             color: root.dimText
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -588,6 +713,7 @@ Panel {
                 readonly property var job: modelData
                 readonly property color stateColor: job.phase === "done" ? root.okColor
                                                   : job.phase === "error" ? root.errorColor
+                                                  : job.phase === "paused" || job.phase === "pausing" ? root.dimText
                                                   : Color.accent
 
                 width: parent.width
@@ -666,7 +792,7 @@ Panel {
                         id: cardPercent
                         anchors.right: parent.right
                         text: card.job.phase === "done" ? "100%"
-                            : card.job.phase === "queued" || card.job.phase === "cancelled" || card.job.phase === "error" ? ""
+                            : card.job.phase === "queued" && card.job.percent === 0 || card.job.phase === "cancelled" || card.job.phase === "error" ? ""
                             : card.job.shownPercent.toFixed(1) + "%"
                         color: card.stateColor
                         font.family: root.bar.fontFamily
@@ -717,16 +843,19 @@ Panel {
                         elide: Text.ElideRight
                         text: {
                           var j = card.job
-                          if (j.phase === "queued") return "Waiting for a free slot…"
+                          if (j.phase === "queued") return j.percent > 0 ? "Resuming…" : "Waiting for a free slot…"
+                          if (j.phase === "pausing") return "Pausing…"
+                          if (j.phase === "paused") return "Paused" + (j.totalBytes > 0 ? "  ·  " + root.humanBytes(j.doneBytes) + " / " + root.humanBytes(j.totalBytes) : "")
                           if (j.phase === "cancelled") return "Cancelled"
                           if (j.phase === "error") return j.error
-                          if (j.phase === "done") return (j.totalBytes > 0 ? root.humanBytes(j.totalBytes) + "  ·  " : "") + "Saved"
+                          if (j.phase === "done") return j.missing ? "File moved or deleted"
+                                                   : (j.totalBytes > 0 ? root.humanBytes(j.totalBytes) + "  ·  " : "") + "Saved"
                           if (j.phase === "finishing") return j.stage.charAt(0).toUpperCase() + j.stage.slice(1) + "…"
                           if (j.totalBytes === 0) return "Starting…"
                           return root.humanBytes(j.doneBytes) + " / " + root.humanBytes(j.totalBytes)
                                  + (j.parts > 1 ? "  ·  " + (j.part === 1 ? "video" : "audio") + " " + j.part + "/" + j.parts : "")
                         }
-                        color: card.job.phase === "error" ? root.errorColor : root.dimText
+                        color: card.job.phase === "error" || card.job.missing ? root.errorColor : root.dimText
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.caption
                       }
@@ -751,7 +880,15 @@ Panel {
                     spacing: Style.space(2)
 
                     PanelActionButton {
-                      visible: card.job.phase === "done"
+                      visible: card.job.phase === "running" || card.job.phase === "paused"
+                      iconText: card.job.phase === "paused" ? "󰐊" : "󰏤"
+                      tooltipText: card.job.phase === "paused" ? "Resume" : "Pause"
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      onClicked: card.job.phase === "paused" ? card.job.resume() : card.job.pause()
+                    }
+                    PanelActionButton {
+                      visible: card.job.phase === "done" && !card.job.missing
                       iconText: "󰐊"
                       tooltipText: "Play"
                       foreground: root.bar.foreground
@@ -759,7 +896,7 @@ Panel {
                       onClicked: { Quickshell.execDetached(["xdg-open", card.job.file]); root.close() }
                     }
                     PanelActionButton {
-                      visible: card.job.phase === "done"
+                      visible: card.job.phase === "done" && !card.job.missing
                       iconText: "󰉋"
                       tooltipText: "Show in folder"
                       foreground: root.bar.foreground

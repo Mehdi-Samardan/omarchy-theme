@@ -95,6 +95,12 @@ ok "Hyprland Tweaks and Video Downloader added to the top-right of the bar, Dock
 for tool in yt-dlp ffmpeg; do
   command -v "$tool" >/dev/null 2>&1 || echo "  ! $tool not found — the Video Downloader needs it: omarchy pkg add $tool"
 done
+# Optional: browser login + fingerprint for sites that refuse, cover art on Opus audio.
+missing=""
+for mod in secretstorage curl_cffi mutagen; do
+  python3 -c "import $mod" 2>/dev/null || missing="$missing python-$mod"
+done
+[ -n "$missing" ] && echo "  · optional for the Video Downloader:  omarchy pkg add$missing"
 
 # 4. Apply
 step "Applying"
