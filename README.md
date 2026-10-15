@@ -76,10 +76,13 @@ Icons of your open apps on the left of the bar, next to the workspaces.
 A download icon on the right of the bar. Click it, paste a link and pick a resolution.
 
 - If your clipboard already holds a link, it's filled in when the panel opens.
-- Shows the title, thumbnail, channel and length, then every available resolution with an estimated size (4K, 2K, Full HD, HD …), plus **Audio only (MP3)**.
-- Click a resolution, or use the arrow keys and Enter. The progress counts video and audio together in bytes, so it climbs once from 0 to 100% and shows MB downloaded / total, which part is downloading, the speed and the time left. Merging or converting at the end gets its own animated step. **Cancel** stops it.
-- Downloads keep running when the panel is closed; the bar icon shows the percentage. A notification fires when it's done, with **Play**, **Open folder** and **Download another** buttons in the panel.
-- Saves to `~/Videos/Downloads`. Works with YouTube, X, Instagram, TikTok and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports. Needs `yt-dlp` and `ffmpeg` (`omarchy pkg add yt-dlp ffmpeg`).
+- Shows the title, thumbnail, channel and length, then every available resolution as a grid of buttons with an estimated size (4K, 2K, FHD, HD …), plus **Audio (MP3)**.
+- **Several downloads at once:** up to 3 run in parallel, the rest wait in a queue. Keep pasting links or picking other resolutions while they run; each resolution gets its own file, so they never overwrite each other.
+- Every download gets a card in the **Downloads** list with its thumbnail, resolution badge, MB done / total, which part is downloading (video or audio), speed, time left and percentage. The progress is measured in bytes across video and audio, so it climbs once from 0 to 100%; merging or converting at the end gets its own animated step.
+- Cards have **Cancel** (nothing is left behind), **Play**, **Show in folder** (opens the file manager with the file selected), **Retry** and **Remove** buttons; **Clear finished** tidies the list.
+- When a download finishes, the link, video card and resolutions at the top clear themselves, ready for the next link.
+- Downloads keep running when the panel is closed. The bar icon shows the overall percentage, and a notification fires when each one finishes.
+- Saves to `~/Videos/Downloads` (the folder button in the header opens it). Works with YouTube, X, Instagram, TikTok and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports. Needs `yt-dlp` and `ffmpeg` (`omarchy pkg add yt-dlp ffmpeg`).
 
 ### About page (fastfetch)
 A compact white OMARCHY logo over five bordered tables in the theme's colors, with a Nerd Font icon on every row.

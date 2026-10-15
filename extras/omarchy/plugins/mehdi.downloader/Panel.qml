@@ -5,8 +5,10 @@ import qs.Ui
 import qs.Commons
 
 // Paste a link, pick a resolution (or audio-only mp3) and download it with
-// yt-dlp through downloader.py. Downloads keep running when the panel is
-// closed; the bar icon shows the progress and a notification fires at the end.
+// yt-dlp through downloader.py. Every download becomes a card in the list at
+// the bottom with its thumbnail, progress, speed and time left. Up to
+// maxParallel downloads run at once, the rest wait in a queue, and they keep
+// running when the panel is closed (the bar icon shows the overall progress).
 Panel {
   id: root
   moduleName: "mehdi.downloader"
@@ -14,31 +16,31 @@ Panel {
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("downloader.py")).replace(/^file:\/\//, ""))
   readonly property string outDir: (Quickshell.env("XDG_VIDEOS_DIR") || Quickshell.env("HOME") + "/Videos") + "/Downloads"
+  readonly property int maxParallel: 3
+  readonly property color okColor: "#a6da95"
+  readonly property color errorColor: "#ed8796"
+  readonly property color dimText: Qt.darker(bar.foreground, 1.45)
 
-  // idle | loading | ready | error | downloading | done
-  property string status: "idle"
-  property string errorText: ""
+  // ---------- Link lookup ----------
+  property string lookupStatus: "idle"   // idle | loading | ready | error
+  property string lookupError: ""
   property string url: ""
   property var info: null
-  property var options: []        // [{ quality, label, detail }]
+  property var options: []               // [{ quality, label, tag, detail }]
   property int selectedIndex: 0
-  property string activeQuality: ""
-  property string activeLabel: ""
-  property real percent: 0
-  property real doneBytes: 0
-  property real totalBytes: 0
-  property real speedBytes: 0
-  property int etaSeconds: 0
-  property int part: 0
-  property int parts: 0
-  property string stage: ""
-  // Animated copy of percent so the number and bar glide instead of jumping.
-  property real shownPercent: 0
-  Behavior on shownPercent { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
-  onPercentChanged: shownPercent = percent
-  property string doneFile: ""
 
-  readonly property bool busy: status === "loading" || status === "downloading"
+  // ---------- Downloads ----------
+  property var jobs: []                  // job objects, newest first
+  property int jobSerial: 0
+
+  readonly property var activeJobs: jobs.filter(function(j) { return j.phase === "running" || j.phase === "finishing" })
+  readonly property int queuedCount: jobs.filter(function(j) { return j.phase === "queued" }).length
+  readonly property bool hasFinished: jobs.some(function(j) { return j.finished })
+  readonly property real overallPercent: {
+    var done = 0, total = 0
+    for (var i = 0; i < activeJobs.length; i++) { done += activeJobs[i].doneBytes; total += activeJobs[i].totalBytes }
+    return total > 0 ? done * 100 / total : 0
+  }
 
   function humanSize(bytes) {
     if (!bytes) return ""
@@ -52,11 +54,6 @@ Panel {
     return Math.round(bytes / 1024) + " KB"
   }
 
-  function partName() {
-    if (parts < 2) return ""
-    return "part " + part + "/" + parts + " · " + (part === 1 ? "video" : "audio")
-  }
-
   function humanTime(sec) {
     sec = Math.round(sec || 0)
     var h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60
@@ -64,23 +61,23 @@ Panel {
     return (h > 0 ? h + ":" : "") + mm + ":" + (s < 10 ? "0" : "") + s
   }
 
-  function heightLabel(h) {
+  function heightTag(h) {
     if (h >= 4320) return "8K"
     if (h >= 2160) return "4K"
     if (h >= 1440) return "2K"
-    if (h >= 1080) return "Full HD"
+    if (h >= 1080) return "FHD"
     if (h >= 720) return "HD"
     return ""
   }
 
   function fetchInfo() {
     var u = urlField.text.trim()
-    if (!/^https?:\/\//i.test(u)) { status = "error"; errorText = "Paste a link that starts with http:// or https://"; return }
+    if (!/^https?:\/\//i.test(u)) { lookupStatus = "error"; lookupError = "Paste a link that starts with http:// or https://"; return }
     if (infoProc.running) infoProc.running = false
     url = u
     info = null
     options = []
-    status = "loading"
+    lookupStatus = "loading"
     infoProc.command = ["python3", helper, "info", u]
     infoProc.running = true
   }
@@ -88,70 +85,170 @@ Panel {
   function applyInfo(raw) {
     var d = null
     try { d = JSON.parse(raw) } catch (e) { d = { error: "Could not read yt-dlp output" } }
-    if (!d || d.error) { status = "error"; errorText = d ? d.error : "Unknown error"; return }
+    if (!d || d.error) { lookupStatus = "error"; lookupError = d ? d.error : "Unknown error"; return }
     var opts = []
     for (var i = 0; i < d.heights.length; i++) {
       var h = d.heights[i]
-      opts.push({ quality: String(h.height), label: h.height + "p",
-                  tag: heightLabel(h.height), detail: humanSize(h.size) })
+      opts.push({ quality: String(h.height), label: h.height + "p", tag: heightTag(h.height), detail: humanSize(h.size) })
     }
-    opts.push({ quality: "audio", label: "Audio only", tag: "MP3", detail: humanSize(d.audioSize) })
+    opts.push({ quality: "audio", label: "Audio", tag: "MP3", detail: humanSize(d.audioSize) })
     info = d
     options = opts
     selectedIndex = 0
-    status = "ready"
+    lookupStatus = "ready"
     keyCatcher.forceActiveFocus()
   }
 
+  // Clear the link, video card and resolutions, ready for the next link.
+  function resetLookup() {
+    if (infoProc.running) infoProc.running = false
+    lookupStatus = "idle"; lookupError = ""; url = ""; info = null; options = []; selectedIndex = 0
+    urlField.text = ""
+  }
+
+  // Open the file manager with the file selected; fall back to opening its folder.
+  function revealFile(path) {
+    var dir = path.substring(0, path.lastIndexOf("/"))
+    var uri = "file://" + encodeURI(path)
+    Quickshell.execDetached(["sh", "-c",
+      'gdbus call --session --dest org.freedesktop.FileManager1 --object-path /org/freedesktop/FileManager1 '
+      + '--method org.freedesktop.FileManager1.ShowItems "[\'$1\']" "" >/dev/null 2>&1 || xdg-open "$2"',
+      "reveal", uri, dir])
+  }
+
+  function isQueuedOrRunning(u, quality) {
+    return jobs.some(function(j) { return j.url === u && j.quality === quality && !j.finished })
+  }
+
   function startDownload(i) {
-    if (i < 0 || i >= options.length || dlProc.running) return
+    if (i < 0 || i >= options.length || !info) return
     var o = options[i]
-    activeQuality = o.quality
-    activeLabel = o.quality === "audio" ? "MP3" : o.label
-    percent = 0; shownPercent = 0; doneBytes = 0; totalBytes = 0; speedBytes = 0; etaSeconds = 0
-    part = 0; parts = 0; stage = ""; doneFile = ""; errorText = ""
-    status = "downloading"
-    dlProc.command = ["python3", helper, "download", url, o.quality, outDir]
-    dlProc.running = true
+    if (isQueuedOrRunning(url, o.quality)) return
+    var job = jobComponent.createObject(root, {
+      jobId: ++jobSerial, url: url, title: info.title, uploader: info.uploader,
+      thumbnail: info.thumbnail, quality: o.quality,
+      label: o.quality === "audio" ? "MP3" : o.label, estimate: o.detail
+    })
+    jobs = [job].concat(jobs)
+    pumpQueue()
   }
 
-  function cancelDownload() {
-    dlProc.running = false
-    status = "ready"
-  }
-
-  function handleLine(line) {
-    var fields = String(line).trim().split(" ")
-    var kind = fields.shift()
-    if (kind === "progress") {
-      // progress <percent> <done bytes> <total bytes> <speed B/s> <eta s> <part> <parts>
-      var n = fields.map(Number)
-      if (!isNaN(n[0])) percent = n[0]
-      doneBytes = n[1] || 0
-      totalBytes = n[2] || 0
-      speedBytes = n[3] || 0
-      etaSeconds = n[4] || 0
-      root.part = n[5] || 0
-      root.parts = n[6] || 0
-    } else if (kind === "stage") {
-      stage = fields.join(" ")
-    } else if (kind === "done") {
-      doneFile = fields.join(" ")
-      percent = 100
-      status = "done"
-      var name = doneFile.split("/").pop()
-      Quickshell.execDetached(["notify-send", "-a", "Video Downloader", "-i", "folder-download", "Download finished", name])
-    } else if (kind === "error") {
-      status = "error"
-      errorText = fields.join(" ")
-      Quickshell.execDetached(["notify-send", "-a", "Video Downloader", "-u", "critical", "Download failed", errorText])
+  function pumpQueue() {
+    var running = jobs.filter(function(j) { return j.phase === "running" || j.phase === "finishing" }).length
+    for (var i = jobs.length - 1; i >= 0 && running < maxParallel; i--) {
+      if (jobs[i].phase === "queued") { jobs[i].start(); running++ }
     }
+    jobs = jobs.slice()   // refresh the derived counts
   }
 
-  function reset() {
-    if (dlProc.running) return
-    status = "idle"; info = null; options = []; errorText = ""; urlField.text = ""
-    urlField.forceActiveFocus()
+  function removeJob(job) {
+    job.cancel()
+    jobs = jobs.filter(function(j) { return j !== job })
+    job.destroy()
+    pumpQueue()
+  }
+
+  function clearFinished() {
+    var keep = []
+    for (var i = 0; i < jobs.length; i++) {
+      if (jobs[i].finished) jobs[i].destroy()
+      else keep.push(jobs[i])
+    }
+    jobs = keep
+  }
+
+  // One download: its own helper process and progress state.
+  Component {
+    id: jobComponent
+
+    Item {
+      id: job
+      property int jobId: 0
+      property string url: ""
+      property string title: ""
+      property string uploader: ""
+      property string thumbnail: ""
+      property string quality: ""
+      property string label: ""
+      property string estimate: ""
+
+      // queued | running | finishing | done | error | cancelled
+      property string phase: "queued"
+      readonly property bool finished: phase === "done" || phase === "error" || phase === "cancelled"
+      property real percent: 0
+      property real shownPercent: 0
+      Behavior on shownPercent { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+      onPercentChanged: shownPercent = percent
+      property real doneBytes: 0
+      property real totalBytes: 0
+      property real speedBytes: 0
+      property int etaSeconds: 0
+      property int part: 0
+      property int parts: 0
+      property string stage: ""
+      property string file: ""
+      property string error: ""
+
+      function start() {
+        phase = "running"
+        proc.command = ["python3", root.helper, "download", url, quality, root.outDir]
+        proc.running = true
+      }
+
+      function cancel() {
+        if (phase === "running" || phase === "finishing") { phase = "cancelled"; proc.running = false }
+        else if (phase === "queued") phase = "cancelled"
+      }
+
+      function retry() {
+        percent = 0; shownPercent = 0; doneBytes = 0; totalBytes = 0; speedBytes = 0
+        etaSeconds = 0; part = 0; parts = 0; stage = ""; error = ""; file = ""
+        phase = "queued"
+        root.pumpQueue()
+      }
+
+      function handle(line) {
+        var f = String(line).trim().split(" ")
+        var kind = f.shift()
+        if (kind === "progress") {
+          // progress <percent> <done bytes> <total bytes> <speed B/s> <eta s> <part> <parts>
+          var n = f.map(Number)
+          if (!isNaN(n[0])) percent = n[0]
+          doneBytes = n[1] || 0
+          totalBytes = n[2] || 0
+          speedBytes = n[3] || 0
+          etaSeconds = n[4] || 0
+          part = n[5] || 0
+          parts = n[6] || 0
+        } else if (kind === "stage") {
+          stage = f.join(" ")
+          phase = "finishing"
+        } else if (kind === "done") {
+          file = f.join(" ")
+          percent = 100
+          phase = "done"
+          if (root.url === url && !root.jobs.some(function(j) { return j.url === url && !j.finished }))
+            root.resetLookup()
+          Quickshell.execDetached(["notify-send", "-a", "Video Downloader", "-i", "folder-download",
+                                   "Download finished", label + " · " + title])
+        } else if (kind === "error") {
+          error = f.join(" ")
+          phase = "error"
+          Quickshell.execDetached(["notify-send", "-a", "Video Downloader", "-u", "critical",
+                                   "Download failed", title + "\n" + error])
+        }
+      }
+
+      Process {
+        id: proc
+        running: false
+        stdout: SplitParser { onRead: function(line) { job.handle(line) } }
+        onExited: {
+          if (job.phase === "running" || job.phase === "finishing") { job.phase = "error"; job.error = "Download stopped" }
+          root.pumpQueue()
+        }
+      }
+    }
   }
 
   Process {
@@ -159,15 +256,8 @@ Panel {
     running: false
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (root.status === "loading") root.applyInfo(text)
+      onStreamFinished: if (root.lookupStatus === "loading") root.applyInfo(text)
     }
-  }
-
-  Process {
-    id: dlProc
-    running: false
-    stdout: SplitParser { onRead: function(line) { root.handleLine(line) } }
-    onExited: if (root.status === "downloading") { root.status = "error"; root.errorText = "Download stopped" }
   }
 
   // Prefill the field with a link from the clipboard.
@@ -184,7 +274,7 @@ Panel {
     }
   }
 
-  onOpenedChanged: if (opened && !busy && status !== "done" && status !== "ready") clipProc.running = true
+  onOpenedChanged: if (opened && lookupStatus === "idle") clipProc.running = true
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -194,19 +284,20 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "󰇚"
-    tooltipText: root.status === "downloading"
-      ? (root.stage !== "" ? root.stage : "Downloading " + root.activeLabel + " · " + root.shownPercent.toFixed(0) + "%")
-      : "Video downloader"
+    tooltipText: root.activeJobs.length === 0 ? "Video downloader"
+      : (root.activeJobs.length === 1 ? "1 download" : root.activeJobs.length + " downloads")
+        + " · " + Math.floor(root.overallPercent) + "%"
+        + (root.queuedCount > 0 ? " · " + root.queuedCount + " queued" : "")
     onPressed: function(b) { root.toggle() }
   }
 
-  // While downloading: the percentage under the icon and a thin bar along the bottom.
+  // Overall progress under the icon while anything downloads.
   Text {
-    visible: root.status === "downloading"
+    visible: root.activeJobs.length > 0
     anchors.horizontalCenter: button.horizontalCenter
     anchors.bottom: button.bottom
     anchors.bottomMargin: Style.space(1)
-    text: root.stage !== "" ? "···" : Math.floor(root.shownPercent) + "%"
+    text: Math.floor(root.overallPercent) + "%"
     color: Color.accent
     font.family: root.bar.fontFamily
     font.pixelSize: Style.font.caption - 3
@@ -219,20 +310,20 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: root.status === "ready" ? keyCatcher : urlField
-    contentWidth: panel.fittedContentWidth(Style.space(440))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(640))
+    focusTarget: root.lookupStatus === "ready" ? keyCatcher : urlField
+    contentWidth: panel.fittedContentWidth(Style.space(460))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       blocked: urlField.activeFocus
       onMoveRequested: function(dx, dy) {
-        if (root.status !== "ready" || dy === 0) return
+        if (root.lookupStatus !== "ready" || dy === 0) return
         if (dy < 0 && root.selectedIndex === 0) { urlField.forceActiveFocus(); return }
         root.selectedIndex = Math.max(0, Math.min(root.options.length - 1, root.selectedIndex + dy))
       }
-      onActivateRequested: if (root.status === "ready") root.startDownload(root.selectedIndex)
+      onActivateRequested: if (root.lookupStatus === "ready") root.startDownload(root.selectedIndex)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -242,33 +333,38 @@ Panel {
         spacing: Style.space(10)
 
         // ---------- Header ----------
-        Row {
-          spacing: Style.space(14)
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(headerIcon.implicitHeight, folderButton.height)
+
           Text {
+            id: headerIcon
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
             text: "󰇚"
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.display
-            anchors.verticalCenter: parent.verticalCenter
           }
-          Column {
+          Text {
+            anchors.left: headerIcon.right
+            anchors.leftMargin: Style.space(12)
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-            Text {
-              text: "Video Downloader"
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-            }
-            Text {
-              text: "YOUTUBE · X · INSTAGRAM · TIKTOK · 1000+ SITES"
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: 1.2
-            }
+            text: "Video Downloader"
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+          }
+          PanelActionButton {
+            id: folderButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "󰉋"
+            tooltipText: "Open " + root.outDir.replace(Quickshell.env("HOME"), "~")
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            onClicked: { Quickshell.execDetached(["xdg-open", root.outDir]); root.close() }
           }
         }
 
@@ -280,7 +376,7 @@ Panel {
           TextField {
             id: urlField
             width: parent.width - fetchButton.width - parent.spacing
-            enabled: !root.busy
+            enabled: root.lookupStatus !== "loading"
             placeholderText: "Paste a video link…"
             foreground: root.bar.foreground
             font.family: root.bar.fontFamily
@@ -288,36 +384,36 @@ Panel {
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.fetchInfo(); event.accepted = true }
               else if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true }
-              else if (event.key === Qt.Key_Down && root.status === "ready") { keyCatcher.forceActiveFocus(); event.accepted = true }
+              else if (event.key === Qt.Key_Down && root.lookupStatus === "ready") { keyCatcher.forceActiveFocus(); event.accepted = true }
             }
           }
 
           PanelActionButton {
             id: fetchButton
             anchors.verticalCenter: parent.verticalCenter
-            iconText: root.status === "loading" ? "󰑓" : "󰁔"
+            iconText: root.lookupStatus === "loading" ? "󰑓" : "󰁔"
             tooltipText: "Find resolutions (Enter)"
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
-            enabled: !root.busy
+            enabled: root.lookupStatus !== "loading"
             onClicked: root.fetchInfo()
           }
         }
 
         Text {
-          visible: root.status === "loading"
+          visible: root.lookupStatus === "loading"
           width: parent.width
           text: "Looking up the video…"
-          color: Qt.darker(root.bar.foreground, 1.4)
+          color: root.dimText
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
         }
 
         Text {
-          visible: root.status === "error"
+          visible: root.lookupStatus === "error"
           width: parent.width
-          text: "󰀦  " + root.errorText
-          color: "#ed8796"
+          text: "󰀦  " + root.lookupError
+          color: root.errorColor
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
           wrapMode: Text.Wrap
@@ -325,23 +421,27 @@ Panel {
 
         // ---------- Video card ----------
         Row {
-          visible: root.info !== null
+          visible: root.lookupStatus === "ready" && root.info !== null
           width: parent.width
           spacing: Style.space(12)
 
-          Image {
-            id: thumb
+          Rectangle {
             width: Style.space(120)
             height: Style.space(68)
-            source: root.info ? root.info.thumbnail : ""
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            sourceSize.width: 240
+            radius: Style.cornerRadius
+            color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.08)
             clip: true
+            Image {
+              anchors.fill: parent
+              source: root.info ? root.info.thumbnail : ""
+              fillMode: Image.PreserveAspectCrop
+              asynchronous: true
+              sourceSize.width: 240
+            }
           }
 
           Column {
-            width: parent.width - thumb.width - parent.spacing
+            width: parent.width - Style.space(120) - parent.spacing
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(3)
             Text {
@@ -357,8 +457,9 @@ Panel {
             }
             Text {
               width: parent.width
-              text: root.info ? [root.info.uploader, root.info.duration ? root.humanTime(root.info.duration) : ""].filter(function(s) { return s }).join("  ·  ") : ""
-              color: Qt.darker(root.bar.foreground, 1.5)
+              text: root.info ? [root.info.uploader, root.info.duration ? root.humanTime(root.info.duration) : ""]
+                                  .filter(function(s) { return s }).join("  ·  ") : ""
+              color: root.dimText
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight
@@ -366,247 +467,325 @@ Panel {
           }
         }
 
-        PanelSeparator { visible: root.info !== null; foreground: root.bar.foreground }
-
-        // ---------- Resolutions ----------
-        Flickable {
-          visible: root.status === "ready" || root.status === "error" && root.options.length > 0
+        // ---------- Resolutions: a grid of chips ----------
+        Flow {
+          visible: root.lookupStatus === "ready"
           width: parent.width
-          height: Math.min(optionsColumn.implicitHeight, Style.space(320))
-          contentHeight: optionsColumn.implicitHeight
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
+          spacing: Style.space(6)
 
-          Column {
-            id: optionsColumn
-            width: parent.width
-            spacing: Style.space(2)
+          Repeater {
+            model: root.options
 
-            Repeater {
-              model: root.options
+            Rectangle {
+              id: chip
+              required property var modelData
+              required property int index
+              readonly property bool selected: index === root.selectedIndex
+              readonly property bool taken: root.isQueuedOrRunning(root.url, modelData.quality) && root.jobs.length >= 0
 
-              Rectangle {
-                id: opt
-                required property var modelData
-                required property int index
-                readonly property bool selected: index === root.selectedIndex
+              width: (parent.width - Style.space(6) * 2) / 3
+              height: Style.space(48)
+              radius: Style.cornerRadius
+              color: selected ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.14)
+                              : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
+              border.width: selected ? 1 : 0
+              border.color: Color.accent
+              opacity: taken ? 0.45 : 1
 
-                width: parent.width
-                height: Style.space(36)
-                radius: Style.cornerRadius
-                color: selected ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12) : "transparent"
-
-                Text {
-                  id: optIcon
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: opt.modelData.quality === "audio" ? "󰝚" : "󰕧"
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-                Text {
-                  id: optLabel
-                  anchors.left: optIcon.right
-                  anchors.leftMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: opt.modelData.label
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                }
-                Rectangle {
-                  visible: opt.modelData.tag !== ""
-                  anchors.left: optLabel.right
-                  anchors.leftMargin: Style.space(8)
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: tagText.implicitWidth + Style.space(10)
-                  height: tagText.implicitHeight + Style.space(2)
-                  radius: Style.cornerRadius
-                  color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1)
+              Column {
+                anchors.centerIn: parent
+                spacing: Style.space(2)
+                Row {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.space(6)
                   Text {
-                    id: tagText
-                    anchors.centerIn: parent
-                    text: opt.modelData.tag
-                    color: Qt.darker(root.bar.foreground, 1.2)
+                    text: (chip.modelData.quality === "audio" ? "󰝚 " : "") + chip.modelData.label
+                    color: root.bar.foreground
                     font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.caption
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                  }
+                  Text {
+                    visible: chip.modelData.tag !== ""
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: chip.modelData.tag
+                    color: Color.accent
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption - 1
                     font.bold: true
                   }
                 }
                 Text {
-                  anchors.right: dlIcon.left
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: opt.modelData.detail ? "~" + opt.modelData.detail : ""
-                  color: Qt.darker(root.bar.foreground, 1.5)
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: chip.taken ? "downloading" : chip.modelData.detail ? "~" + chip.modelData.detail : "size unknown"
+                  color: root.dimText
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                 }
-                Text {
-                  id: dlIcon
-                  anchors.right: parent.right
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "󰇚"
-                  color: root.bar.foreground
-                  opacity: opt.selected ? 1 : 0.35
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.body
-                }
+              }
 
-                MouseArea {
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onEntered: root.selectedIndex = opt.index
-                  onClicked: root.startDownload(opt.index)
-                }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: chip.taken ? Qt.ArrowCursor : Qt.PointingHandCursor
+                onEntered: root.selectedIndex = chip.index
+                onClicked: root.startDownload(chip.index)
               }
             }
           }
         }
 
-        // ---------- Progress ----------
-        Column {
-          visible: root.status === "downloading" || root.status === "done"
+        // ---------- Downloads ----------
+        Item {
+          visible: root.jobs.length > 0
           width: parent.width
-          spacing: Style.space(6)
-
-          Item {
-            width: parent.width
-            implicitHeight: progressLabel.implicitHeight
-            Text {
-              id: progressLabel
-              anchors.left: parent.left
-              text: root.status === "done" ? "󰄬  Saved " + root.activeLabel
-                  : root.stage !== "" ? "󰑓  " + root.stage.charAt(0).toUpperCase() + root.stage.slice(1) + "…"
-                  : root.totalBytes === 0 ? "Starting " + root.activeLabel + "…"
-                  : "Downloading " + root.activeLabel
-              color: root.status === "done" ? "#a6da95" : root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
-            }
-            Text {
-              anchors.right: parent.right
-              anchors.verticalCenter: progressLabel.verticalCenter
-              text: root.status === "done" ? "100%" : root.shownPercent.toFixed(1) + "%"
-              color: root.status === "done" ? "#a6da95" : Color.accent
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-            }
-          }
-
-          Rectangle {
-            id: track
-            width: parent.width
-            height: Style.space(8)
-            radius: height / 2
-            clip: true
-            color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
-            Rectangle {
-              width: parent.width * Math.min(1, (root.status === "done" ? 100 : root.shownPercent) / 100)
-              height: parent.height
-              radius: parent.radius
-              color: root.status === "done" ? "#a6da95" : Color.accent
-            }
-            // Moving highlight while merging / converting, when there are no bytes to count.
-            Rectangle {
-              id: shimmer
-              visible: root.status === "downloading" && root.stage !== ""
-              width: parent.width * 0.3
-              height: parent.height
-              radius: parent.radius
-              color: Qt.rgba(1, 1, 1, 0.35)
-              NumberAnimation on x {
-                running: shimmer.visible
-                from: -track.width * 0.3; to: track.width
-                duration: 1100; loops: Animation.Infinite
-              }
-            }
-          }
-
-          Item {
-            visible: root.status === "downloading" && root.stage === "" && root.totalBytes > 0
-            width: parent.width
-            implicitHeight: bytesLabel.implicitHeight
-            Text {
-              id: bytesLabel
-              anchors.left: parent.left
-              text: root.humanBytes(root.doneBytes) + " / " + root.humanBytes(root.totalBytes)
-                    + (root.partName() ? "   ·   " + root.partName() : "")
-              color: Qt.darker(root.bar.foreground, 1.3)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-            Text {
-              anchors.right: parent.right
-              text: [root.speedBytes > 0 ? root.humanBytes(root.speedBytes) + "/s" : "",
-                     root.etaSeconds > 0 ? root.humanTime(root.etaSeconds) + " left" : ""]
-                    .filter(function(s) { return s }).join("  ·  ")
-              color: Qt.darker(root.bar.foreground, 1.3)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-          }
+          implicitHeight: Math.max(downloadsTitle.implicitHeight, clearButton.height)
 
           Text {
-            visible: root.status === "done"
-            width: parent.width
-            text: root.doneFile.split("/").pop()
-            color: Qt.darker(root.bar.foreground, 1.5)
+            id: downloadsTitle
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "DOWNLOADS" + (root.activeJobs.length > 0 ? "  ·  " + root.activeJobs.length + " ACTIVE" : "")
+                  + (root.queuedCount > 0 ? "  ·  " + root.queuedCount + " QUEUED" : "")
+            color: root.dimText
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
-            elide: Text.ElideMiddle
+            font.bold: true
+            font.letterSpacing: 1.2
           }
-
-          Row {
-            spacing: Style.space(6)
-            PanelActionButton {
-              visible: root.status === "downloading"
-              iconText: "󰜺"
-              tooltipText: "Cancel download"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              onClicked: root.cancelDownload()
-            }
-            PanelActionButton {
-              visible: root.status === "done"
-              iconText: "󰐊"
-              tooltipText: "Play"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              onClicked: { Quickshell.execDetached(["xdg-open", root.doneFile]); root.close() }
-            }
-            PanelActionButton {
-              visible: root.status === "done"
-              iconText: "󰉋"
-              tooltipText: "Open folder"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              onClicked: { Quickshell.execDetached(["xdg-open", root.outDir]); root.close() }
-            }
-            PanelActionButton {
-              visible: root.status === "done"
-              iconText: "󰐕"
-              tooltipText: "Download another"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              onClicked: root.reset()
-            }
+          PanelActionButton {
+            id: clearButton
+            visible: root.hasFinished
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "󰎟"
+            tooltipText: "Clear finished"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            onClicked: root.clearFinished()
           }
         }
 
-        Text {
+        Flickable {
+          visible: root.jobs.length > 0
           width: parent.width
-          text: "Saves to " + root.outDir.replace(Quickshell.env("HOME"), "~")
-          color: Qt.darker(root.bar.foreground, 1.7)
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.caption
+          height: Math.min(jobsColumn.implicitHeight, Style.space(400))
+          contentHeight: jobsColumn.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+
+          Column {
+            id: jobsColumn
+            width: parent.width
+            spacing: Style.space(8)
+
+            Repeater {
+              model: root.jobs
+
+              Rectangle {
+                id: card
+                required property var modelData
+                readonly property var job: modelData
+                readonly property color stateColor: job.phase === "done" ? root.okColor
+                                                  : job.phase === "error" ? root.errorColor
+                                                  : Color.accent
+
+                width: parent.width
+                height: cardRow.implicitHeight + Style.space(20)
+                radius: Style.cornerRadius
+                color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.06)
+
+                Row {
+                  id: cardRow
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.margins: Style.space(10)
+                  spacing: Style.space(12)
+
+                  // Thumbnail with the quality badge.
+                  Rectangle {
+                    id: cardThumb
+                    width: Style.space(104)
+                    height: Style.space(58)
+                    radius: Style.cornerRadius
+                    clip: true
+                    color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.08)
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Image {
+                      anchors.fill: parent
+                      source: card.job.thumbnail
+                      fillMode: Image.PreserveAspectCrop
+                      asynchronous: true
+                      sourceSize.width: 208
+                      opacity: card.job.phase === "cancelled" ? 0.4 : 1
+                    }
+                    Rectangle {
+                      anchors.right: parent.right
+                      anchors.bottom: parent.bottom
+                      anchors.margins: Style.space(4)
+                      width: badge.implicitWidth + Style.space(8)
+                      height: badge.implicitHeight + Style.space(2)
+                      radius: Style.cornerRadius
+                      color: Qt.rgba(0, 0, 0, 0.7)
+                      Text {
+                        id: badge
+                        anchors.centerIn: parent
+                        text: card.job.label
+                        color: "white"
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption - 1
+                        font.bold: true
+                      }
+                    }
+                  }
+
+                  Column {
+                    width: cardRow.width - cardThumb.width - actions.width - cardRow.spacing * 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(5)
+
+                    // Title + percentage
+                    Item {
+                      width: parent.width
+                      implicitHeight: cardTitle.implicitHeight
+                      Text {
+                        id: cardTitle
+                        anchors.left: parent.left
+                        anchors.right: cardPercent.left
+                        anchors.rightMargin: Style.space(8)
+                        text: card.job.title
+                        color: root.bar.foreground
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.body
+                        font.bold: true
+                        elide: Text.ElideRight
+                      }
+                      Text {
+                        id: cardPercent
+                        anchors.right: parent.right
+                        text: card.job.phase === "done" ? "100%"
+                            : card.job.phase === "queued" || card.job.phase === "cancelled" || card.job.phase === "error" ? ""
+                            : card.job.shownPercent.toFixed(1) + "%"
+                        color: card.stateColor
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.body
+                        font.bold: true
+                      }
+                    }
+
+                    // Progress bar
+                    Rectangle {
+                      id: cardTrack
+                      width: parent.width
+                      height: Style.space(6)
+                      radius: height / 2
+                      clip: true
+                      color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
+                      Rectangle {
+                        width: parent.width * Math.min(1, (card.job.phase === "done" ? 100 : card.job.shownPercent) / 100)
+                        height: parent.height
+                        radius: parent.radius
+                        color: card.stateColor
+                        visible: card.job.phase !== "cancelled"
+                      }
+                      Rectangle {
+                        id: shimmer
+                        visible: card.job.phase === "finishing" || card.job.phase === "running" && card.job.totalBytes === 0
+                        width: parent.width * 0.3
+                        height: parent.height
+                        radius: parent.radius
+                        color: Qt.rgba(1, 1, 1, 0.35)
+                        NumberAnimation on x {
+                          running: shimmer.visible
+                          from: -cardTrack.width * 0.3; to: cardTrack.width
+                          duration: 1100; loops: Animation.Infinite
+                        }
+                      }
+                    }
+
+                    // Status line: bytes · part on the left, speed · time left on the right
+                    Item {
+                      width: parent.width
+                      implicitHeight: statusLeft.implicitHeight
+                      Text {
+                        id: statusLeft
+                        anchors.left: parent.left
+                        anchors.right: statusRight.left
+                        anchors.rightMargin: Style.space(8)
+                        elide: Text.ElideRight
+                        text: {
+                          var j = card.job
+                          if (j.phase === "queued") return "Waiting for a free slot…"
+                          if (j.phase === "cancelled") return "Cancelled"
+                          if (j.phase === "error") return j.error
+                          if (j.phase === "done") return (j.totalBytes > 0 ? root.humanBytes(j.totalBytes) + "  ·  " : "") + "Saved"
+                          if (j.phase === "finishing") return j.stage.charAt(0).toUpperCase() + j.stage.slice(1) + "…"
+                          if (j.totalBytes === 0) return "Starting…"
+                          return root.humanBytes(j.doneBytes) + " / " + root.humanBytes(j.totalBytes)
+                                 + (j.parts > 1 ? "  ·  " + (j.part === 1 ? "video" : "audio") + " " + j.part + "/" + j.parts : "")
+                        }
+                        color: card.job.phase === "error" ? root.errorColor : root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                      Text {
+                        id: statusRight
+                        anchors.right: parent.right
+                        visible: card.job.phase === "running" && card.job.totalBytes > 0
+                        text: [card.job.speedBytes > 0 ? root.humanBytes(card.job.speedBytes) + "/s" : "",
+                               card.job.etaSeconds > 0 ? root.humanTime(card.job.etaSeconds) + " left" : ""]
+                              .filter(function(s) { return s }).join("  ·  ")
+                        color: root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+
+                  // Actions
+                  Row {
+                    id: actions
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    PanelActionButton {
+                      visible: card.job.phase === "done"
+                      iconText: "󰐊"
+                      tooltipText: "Play"
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      onClicked: { Quickshell.execDetached(["xdg-open", card.job.file]); root.close() }
+                    }
+                    PanelActionButton {
+                      visible: card.job.phase === "done"
+                      iconText: "󰉋"
+                      tooltipText: "Show in folder"
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      onClicked: { root.revealFile(card.job.file); root.close() }
+                    }
+                    PanelActionButton {
+                      visible: card.job.phase === "error" || card.job.phase === "cancelled"
+                      iconText: "󰑐"
+                      tooltipText: "Retry"
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      onClicked: card.job.retry()
+                    }
+                    PanelActionButton {
+                      iconText: card.job.finished ? "󰅖" : "󰜺"
+                      tooltipText: card.job.finished ? "Remove from list" : "Cancel"
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      onClicked: card.job.finished ? root.removeJob(card.job) : card.job.cancel()
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

@@ -16,7 +16,11 @@
 #       and audio separately), measured in bytes, so it climbs once from 0 to
 #       100 instead of restarting per stream. Speed is smoothed and the time
 #       left is the remaining bytes over that speed.
-import json, os, re, subprocess, sys, time
+#       Files are named "<title> [<id>] <height>p.mp4" (or .mp3), so several
+#       resolutions of one video can download side by side. Work-in-progress
+#       files live in a private temp folder that is removed when the download
+#       ends or is cancelled (SIGTERM), so a cancel leaves nothing behind.
+import json, os, re, shutil, signal, subprocess, sys, tempfile, time
 
 def ytdlp(*args):
     return ["yt-dlp", "--no-playlist", "--no-warnings", *args]
@@ -51,8 +55,11 @@ def num(v):
 
 def download(url, quality, outdir):
     os.makedirs(outdir, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix=".downloading-", dir=outdir)
+    suffix = "" if quality == "audio" else f" {int(quality)}p"
     # --print would make yt-dlp quiet, so --progress keeps the progress lines.
-    args = ["--newline", "--no-part", "--progress", "-o", os.path.join(outdir, "%(title).150B [%(id)s].%(ext)s"),
+    args = ["--newline", "--progress", "-P", outdir, "-P", f"temp:{tmp}",
+            "-o", f"%(title).150B [%(id)s]{suffix}.%(ext)s",
             "--print", "before_dl:parts %(requested_formats.:.format_id)j %(requested_formats.:.filesize)j "
                        "%(requested_formats.:.filesize_approx)j %(format_id)j %(filesize,filesize_approx)j",
             "--progress-template", "download:progress %(info.format_id)s %(progress.downloaded_bytes)s "
@@ -85,6 +92,16 @@ def download(url, quality, outdir):
         print(f"progress {pct:.1f} {int(done)} {int(total)} {int(speed or 0)} {int(eta)} {active + 1} {len(order)}", flush=True)
 
     p = subprocess.Popen(ytdlp(*args, url), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+    def stop(*_):
+        p.terminate()
+        try: p.wait(5)
+        except subprocess.TimeoutExpired: p.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+        sys.exit(130)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
     last_err = ""
     for line in p.stdout:
         line = line.strip()
@@ -143,7 +160,9 @@ def download(url, quality, outdir):
             print("stage finishing the file", flush=True)
         elif line.startswith("ERROR:"):
             last_err = line[6:].strip()
-    if p.wait() != 0:
+    code = p.wait()
+    shutil.rmtree(tmp, ignore_errors=True)
+    if code != 0:
         print("error " + (last_err or "download failed"), flush=True)
 
 if __name__ == "__main__":
