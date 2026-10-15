@@ -22,7 +22,7 @@ The installer:
 
 1. Copies the theme to `~/.config/omarchy/themes/coppernight` and activates it.
 2. Installs the Hyprland look'n'feel to `~/.config/hypr/looknfeel.lua`.
-3. Installs the **Hyprland Tweaks** bar widget and adds it to the top-right of the bar.
+3. Installs the **Hyprland Tweaks** bar widget (top-right of the bar) and the **Dock** widget (open-app icons, left of the bar).
 4. Reloads Hyprland and restarts the Omarchy shell.
 
 Before replacing a file, the installer saves a backup next to it as `<file>.bak.<timestamp>`.
@@ -64,6 +64,14 @@ Click the Hyprland logo in the top-right of the bar to open a panel with about 9
 - Settings you changed are highlighted. Click ↺, or right-click a slider, to reset one setting. **Reset all** undoes every change.
 - Only the settings you change are saved, to `~/.config/hypr/tweaks.lua`, so they survive reboots.
 
+### Dock bar widget
+Icons of your open apps on the left of the bar, next to the workspaces.
+
+- Click an icon to focus that app. Click again to cycle through its windows.
+- Middle-click closes the focused window of that app.
+- A small number shows when an app has more than one window open.
+- Omarchy web apps get their own icon instead of Chrome's. Apps without a usable icon get one bundled with the widget (Claude, the About page), and GitHub Desktop is matched to its icon.
+
 ### About page (fastfetch)
 A compact white OMARCHY logo over five bordered tables in the theme's colors, with a Nerd Font icon on every row.
 
@@ -98,7 +106,7 @@ cd ~/.config/omarchy/themes/coppernight
 ```
 
 - **Look'n'feel:** restore `~/.config/hypr/looknfeel.lua.bak.<timestamp>`.
-- **Bar widget:** delete `~/.config/omarchy/plugins/mehdi.hyprtweaks`, then remove `mehdi.hyprtweaks` from `~/.config/omarchy/shell.json`.
+- **Bar widgets:** delete `~/.config/omarchy/plugins/mehdi.hyprtweaks` and `~/.config/omarchy/plugins/mehdi.dock`, then remove both ids from `~/.config/omarchy/shell.json`.
 - **Saved widget settings:** delete `~/.config/hypr/tweaks.lua`.
 
 ## Repository layout
@@ -106,6 +114,6 @@ cd ~/.config/omarchy/themes/coppernight
 ```
 .                      Theme files (copied to ~/.config/omarchy/themes/coppernight)
 extras/hypr/           Hyprland look'n'feel
-extras/omarchy/plugins Hyprland Tweaks bar widget
+extras/omarchy/plugins Hyprland Tweaks and Dock bar widgets
 install.sh             One-command installer
 ```

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "mehdi.dock",
+  "name": "Dock",
+  "version": "1.0.0",
+  "author": "mehdi",
+  "description": "Icons of open applications, click to focus",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Dock.qml"
+  },
+  "barWidget": {
+    "displayName": "Dock",
+    "description": "Icons of open applications, click to focus",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

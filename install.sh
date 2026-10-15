@@ -6,18 +6,19 @@
 # or from a clone:  ./install.sh
 #
 # Installs the theme, the Hyprland look'n'feel (rounding, blur, shadow,
-# smooth animations) and the Hyprland Tweaks bar widget. Every file it
+# smooth animations) and two bar widgets: Hyprland Tweaks and the Dock. Every file it
 # replaces is backed up next to the original as <file>.bak.<timestamp>.
 set -euo pipefail
 
 REPO_URL="https://github.com/Mehdi-Samardan/omarchy-theme.git"
 THEME_NAME="coppernight"
-PLUGIN_ID="mehdi.hyprtweaks"
+# Bar widgets as <plugin id>:<bar section>.
+PLUGINS=("mehdi.hyprtweaks:right" "mehdi.dock:left")
 STAMP=$(date +%s)
 
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
 THEME_DIR="$CONFIG/omarchy/themes/$THEME_NAME"
-PLUGIN_DIR="$CONFIG/omarchy/plugins/$PLUGIN_ID"
+PLUGINS_DIR="$CONFIG/omarchy/plugins"
 SHELL_JSON="$CONFIG/omarchy/shell.json"
 LOOKNFEEL="$CONFIG/hypr/looknfeel.lua"
 
@@ -58,30 +59,36 @@ backup "$LOOKNFEEL"
 cp "$SRC/extras/hypr/looknfeel.lua" "$LOOKNFEEL"
 ok "rounding 8, border 1, shadow, blur and smooth animations"
 
-# 3. Hyprland Tweaks bar widget
-step "Installing Hyprland Tweaks bar widget"
-mkdir -p "$PLUGIN_DIR"
-cp "$SRC/extras/omarchy/plugins/$PLUGIN_ID/"* "$PLUGIN_DIR/"
-ok "plugin copied to $PLUGIN_DIR"
+# 3. Bar widgets: Hyprland Tweaks (top-right) and Dock (open-app icons, left)
+step "Installing bar widgets"
+for plugin in "${PLUGINS[@]}"; do
+  id="${plugin%%:*}"
+  mkdir -p "$PLUGINS_DIR/$id"
+  cp -r "$SRC/extras/omarchy/plugins/$id/"* "$PLUGINS_DIR/$id/"
+  ok "$id copied to $PLUGINS_DIR/$id"
+done
 
 if [ ! -f "$SHELL_JSON" ]; then
   cp "${OMARCHY_PATH:-/usr/share/omarchy}/config/omarchy/shell.json" "$SHELL_JSON"
 else
   backup "$SHELL_JSON"
 fi
-python3 - "$SHELL_JSON" "$PLUGIN_ID" <<'EOF'
+python3 - "$SHELL_JSON" "${PLUGINS[@]}" <<'EOF'
 import json, sys
-path, plugin = sys.argv[1], sys.argv[2]
+path, plugins = sys.argv[1], sys.argv[2:]
 with open(path) as f:
     data = json.load(f)
-right = data.setdefault("bar", {}).setdefault("layout", {}).setdefault("right", [])
-if not any(item.get("id") == plugin for item in right):
-    right.append({"id": plugin})
+layout = data.setdefault("bar", {}).setdefault("layout", {})
+placed = {item.get("id") for section in layout.values() for item in section if isinstance(item, dict)}
+for plugin in plugins:
+    pid, section = plugin.split(":")
+    if pid not in placed:
+        layout.setdefault(section, []).append({"id": pid})
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 EOF
-ok "widget added to the top-right of the bar"
+ok "Hyprland Tweaks added to the top-right of the bar, Dock to the left"
 
 # 4. Apply
 step "Applying"
