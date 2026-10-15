@@ -64,12 +64,28 @@ Click the Hyprland logo in the top-right of the bar to open a panel with about 9
 - Settings you changed are highlighted. Click ↺, or right-click a slider, to reset one setting. **Reset all** undoes every change.
 - Only the settings you change are saved, to `~/.config/hypr/tweaks.lua`, so they survive reboots.
 
+### About page (fastfetch)
+A compact white OMARCHY logo over five bordered tables in the theme's colors, with a Nerd Font icon on every row.
+
+| Table | What it shows |
+|---|---|
+| System | OS, user, host, kernel, init, boot, uptime, packages (+ AUR), last sync, processes, load, locale |
+| Hardware | Board, BIOS, CPU, cores, CPU load / temp / governor, GPU, driver, VRAM, memory, swap, disk, drives, filesystem, display, audio |
+| Network | Interface + speed, local IP, MAC, gateway, DNS, Wi-Fi, Bluetooth |
+| Desktop | WM, workspaces, theme, terminal, shell, editor, browser, font, cursor, icons, keyboard, now playing |
+| Dev | git, python, node, rust, go, gcc, docker, mise (only what's installed) |
+
+- Memory, swap, disk, VRAM and CPU load get a usage bar that turns green → yellow → red.
+- **SUPER + SHIFT + A** opens it tiled, like SUPER + T. It replaces Omarchy's default ChatGPT shortcut.
+- It opens in foot at font size 8 so the whole page fits on a 1440p screen. Change `size=8` in `~/.config/fastfetch/launch-about.sh` to adjust.
+
 ## Optional extras
 
 ```bash
 cd ~/.config/omarchy/themes/coppernight
 ./apply-icons.sh        # Papirus-Dark with orange folders + peach cursor
 ./apply-filemanager.sh  # File manager styling
+./install-fastfetch.sh  # About page + SUPER+SHIFT+A shortcut
 ```
 
 ## Undo
@@ -78,6 +94,7 @@ cd ~/.config/omarchy/themes/coppernight
 cd ~/.config/omarchy/themes/coppernight
 ./remove-gtk.sh
 ./remove-icons.sh
+./remove-fastfetch.sh   # About page + its shortcut
 ```
 
 - **Look'n'feel:** restore `~/.config/hypr/looknfeel.lua.bak.<timestamp>`.

@@ -62,19 +62,37 @@ install_file() {
 }
 
 install_file "$SRC/config.jsonc" "config.jsonc"
-# The logo is referenced by absolute path from the config, so it has to sit
-# next to it. Skip 1.png entirely if the config has no local logo source.
-if grep -q '~/.config/fastfetch/1.png' "$SRC/config.jsonc"; then
-  if [ -f "$SRC/1.png" ]; then
-    install_file "$SRC/1.png" "1.png"
+# The About page: about-tables.py draws the OMARCHY logo + info tables that
+# config.jsonc runs, drives.sh lists NVMe drives for it, and launch-about.sh
+# opens it in foot with a smaller font so the whole page fits on screen.
+for script in about-tables.py drives.sh launch-about.sh; do
+  install_file "$SRC/$script" "$script"
+  chmod +x "$DEST/$script"
+done
+
+# 3. Hyprland: SUPER+SHIFT+A opens the About page tiled (instead of the
+#    default floating window / ChatGPT binding). Written as one marked block
+#    so remove-fastfetch.sh can take it out whole.
+BINDINGS="$HOME/.config/hypr/bindings.lua"
+if [ -f "$BINDINGS" ]; then
+  if grep -q '^-- >>> coppernight about' "$BINDINGS"; then
+    skip "About keybinding already in hypr/bindings.lua"
   else
-    warn "1.png missing from $SRC — fastfetch will draw a placeholder logo"
+    cat >>"$BINDINGS" <<'LUA'
+
+-- >>> coppernight about: added by install-fastfetch.sh (remove with remove-fastfetch.sh)
+hl.unbind("SUPER + SHIFT + A")
+o.bind("SUPER + SHIFT + A", "About", "~/.config/fastfetch/launch-about.sh")
+o.window("org.omarchy.about", { tile = true })
+-- <<< coppernight about
+LUA
+    ok "SUPER+SHIFT+A opens the About page (hypr/bindings.lua)"
   fi
 else
-  skip "1.png (config uses an external logo source)"
+  skip "no ~/.config/hypr/bindings.lua — About keybinding not added"
 fi
 
-# 3. Sanity check what we just wrote.
+# 4. Sanity check what we just wrote.
 if [ -f "$DEST/config.jsonc" ]; then
   ok "~/.config/fastfetch/config.jsonc in place"
 else

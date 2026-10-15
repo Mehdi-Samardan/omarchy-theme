@@ -42,7 +42,7 @@ if [ ! -d "$DEST" ]; then
   skip "$DEST does not exist — nothing to remove"
 else
   # Restore-or-delete, same rule as remove-gtk.sh.
-  for name in config.jsonc 1.png; do
+  for name in config.jsonc 1.png about-tables.py drives.sh launch-about.sh; do
     target="$DEST/$name"
     backup="$target.pre-coppernight"
     if [ -f "$backup" ]; then
@@ -65,6 +65,18 @@ else
   # Only tidy the directory if we emptied it. fastfetch.jsonc lives in the same
   # place when a user configures fastfetch by hand — leave it be.
   rmdir "$DEST" 2>/dev/null && ok "removed empty $DEST" || skip "$DEST still has files, kept"
+fi
+
+# Take the About keybinding block back out of hypr/bindings.lua.
+BINDINGS="$HOME/.config/hypr/bindings.lua"
+if [ -f "$BINDINGS" ] && grep -q '^-- >>> coppernight about' "$BINDINGS"; then
+  if sed -i '/^-- >>> coppernight about/,/^-- <<< coppernight about/d' "$BINDINGS"; then
+    ok "removed About keybinding from hypr/bindings.lua"
+  else
+    warn "could not edit $BINDINGS — remove the 'coppernight about' block by hand"
+  fi
+else
+  skip "no About keybinding block in hypr/bindings.lua"
 fi
 
 # Optional: uninstall the package too. Only with the explicit flag.
