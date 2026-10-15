@@ -6,14 +6,15 @@
 # or from a clone:  ./install.sh
 #
 # Installs the theme, the Hyprland look'n'feel (rounding, blur, shadow,
-# smooth animations) and two bar widgets: Hyprland Tweaks and the Dock. Every file it
+# smooth animations) and three bar widgets: Hyprland Tweaks, the Dock and
+# the Video Downloader. Every file it
 # replaces is backed up next to the original as <file>.bak.<timestamp>.
 set -euo pipefail
 
 REPO_URL="https://github.com/Mehdi-Samardan/omarchy-theme.git"
 THEME_NAME="coppernight"
 # Bar widgets as <plugin id>:<bar section>.
-PLUGINS=("mehdi.hyprtweaks:right" "mehdi.dock:left")
+PLUGINS=("mehdi.hyprtweaks:right" "mehdi.dock:left" "mehdi.downloader:right")
 STAMP=$(date +%s)
 
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -59,7 +60,7 @@ backup "$LOOKNFEEL"
 cp "$SRC/extras/hypr/looknfeel.lua" "$LOOKNFEEL"
 ok "rounding 8, border 1, shadow, blur and smooth animations"
 
-# 3. Bar widgets: Hyprland Tweaks (top-right) and Dock (open-app icons, left)
+# 3. Bar widgets: Hyprland Tweaks and Video Downloader (top-right), Dock (open-app icons, left)
 step "Installing bar widgets"
 for plugin in "${PLUGINS[@]}"; do
   id="${plugin%%:*}"
@@ -88,7 +89,12 @@ with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 EOF
-ok "Hyprland Tweaks added to the top-right of the bar, Dock to the left"
+ok "Hyprland Tweaks and Video Downloader added to the top-right of the bar, Dock to the left"
+
+# The Video Downloader needs yt-dlp (and ffmpeg to merge video + audio).
+for tool in yt-dlp ffmpeg; do
+  command -v "$tool" >/dev/null 2>&1 || echo "  ! $tool not found — the Video Downloader needs it: omarchy pkg add $tool"
+done
 
 # 4. Apply
 step "Applying"

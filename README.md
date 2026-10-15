@@ -22,7 +22,7 @@ The installer:
 
 1. Copies the theme to `~/.config/omarchy/themes/coppernight` and activates it.
 2. Installs the Hyprland look'n'feel to `~/.config/hypr/looknfeel.lua`.
-3. Installs the **Hyprland Tweaks** bar widget (top-right of the bar) and the **Dock** widget (open-app icons, left of the bar).
+3. Installs the **Hyprland Tweaks** and **Video Downloader** bar widgets (top-right of the bar) and the **Dock** widget (open-app icons, left of the bar).
 4. Reloads Hyprland and restarts the Omarchy shell.
 
 Before replacing a file, the installer saves a backup next to it as `<file>.bak.<timestamp>`.
@@ -72,6 +72,15 @@ Icons of your open apps on the left of the bar, next to the workspaces.
 - A small number shows when an app has more than one window open.
 - Omarchy web apps get their own icon instead of Chrome's. Apps without a usable icon get one bundled with the widget (Claude, the About page), and GitHub Desktop is matched to its icon.
 
+### Video Downloader bar widget
+A download icon on the right of the bar. Click it, paste a link and pick a resolution.
+
+- If your clipboard already holds a link, it's filled in when the panel opens.
+- Shows the title, thumbnail, channel and length, then every available resolution with an estimated size (4K, 2K, Full HD, HD …), plus **Audio only (MP3)**.
+- Click a resolution, or use the arrow keys and Enter. A progress bar shows speed and time left; **Cancel** stops it.
+- Downloads keep running when the panel is closed; the bar icon shows the percentage. A notification fires when it's done, with **Play**, **Open folder** and **Download another** buttons in the panel.
+- Saves to `~/Videos/Downloads`. Works with YouTube, X, Instagram, TikTok and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports. Needs `yt-dlp` and `ffmpeg` (`omarchy pkg add yt-dlp ffmpeg`).
+
 ### About page (fastfetch)
 A compact white OMARCHY logo over five bordered tables in the theme's colors, with a Nerd Font icon on every row.
 
@@ -106,7 +115,7 @@ cd ~/.config/omarchy/themes/coppernight
 ```
 
 - **Look'n'feel:** restore `~/.config/hypr/looknfeel.lua.bak.<timestamp>`.
-- **Bar widgets:** delete `~/.config/omarchy/plugins/mehdi.hyprtweaks` and `~/.config/omarchy/plugins/mehdi.dock`, then remove both ids from `~/.config/omarchy/shell.json`.
+- **Bar widgets:** delete `~/.config/omarchy/plugins/mehdi.hyprtweaks`, `mehdi.dock` and `mehdi.downloader`, then remove those ids from `~/.config/omarchy/shell.json`.
 - **Saved widget settings:** delete `~/.config/hypr/tweaks.lua`.
 
 ## Repository layout
@@ -114,6 +123,6 @@ cd ~/.config/omarchy/themes/coppernight
 ```
 .                      Theme files (copied to ~/.config/omarchy/themes/coppernight)
 extras/hypr/           Hyprland look'n'feel
-extras/omarchy/plugins Hyprland Tweaks and Dock bar widgets
+extras/omarchy/plugins Hyprland Tweaks, Dock and Video Downloader bar widgets
 install.sh             One-command installer
 ```
