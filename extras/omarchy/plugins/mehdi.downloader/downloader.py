@@ -8,11 +8,15 @@
 #
 #   downloader.py download <url> <height|audio> <dir>
 #       Downloads to <dir> and prints progress lines the widget parses:
-#         progress <percent> <speed> <eta>
+#         progress <percent> <done bytes> <total bytes> <speed B/s> <eta s> <part> <parts>
 #         stage <text>            (merging, converting to mp3, ...)
 #         done <file path>
 #         error <message>
-import json, os, re, subprocess, sys
+#       The percentage covers every stream yt-dlp fetches (YouTube sends video
+#       and audio separately), measured in bytes, so it climbs once from 0 to
+#       100 instead of restarting per stream. Speed is smoothed and the time
+#       left is the remaining bytes over that speed.
+import json, os, re, subprocess, sys, time
 
 def ytdlp(*args):
     return ["yt-dlp", "--no-playlist", "--no-warnings", *args]
@@ -41,10 +45,19 @@ def info(url):
         "audioSize": audio,
     }))
 
+def num(v):
+    try: return float(v)
+    except (TypeError, ValueError): return None
+
 def download(url, quality, outdir):
     os.makedirs(outdir, exist_ok=True)
-    args = ["--newline", "--no-part", "-o", os.path.join(outdir, "%(title).150B [%(id)s].%(ext)s"),
-            "--progress-template", "download:progress %(progress._percent_str)s %(progress._speed_str)s %(progress._eta_str)s",
+    # --print would make yt-dlp quiet, so --progress keeps the progress lines.
+    args = ["--newline", "--no-part", "--progress", "-o", os.path.join(outdir, "%(title).150B [%(id)s].%(ext)s"),
+            "--print", "before_dl:parts %(requested_formats.:.format_id)j %(requested_formats.:.filesize)j "
+                       "%(requested_formats.:.filesize_approx)j %(format_id)j %(filesize,filesize_approx)j",
+            "--progress-template", "download:progress %(info.format_id)s %(progress.downloaded_bytes)s "
+                                   "%(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s "
+                                   "%(progress.fragment_index)s %(progress.fragment_count)s",
             "--print", "after_move:done %(filepath)s"]
     if quality == "audio":
         args += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"]
@@ -52,16 +65,82 @@ def download(url, quality, outdir):
         h = int(quality)
         args += ["-f", f"bv*[height<={h}]+ba/b[height<={h}]", "-S", f"res:{h},ext:mp4:m4a",
                  "--merge-output-format", "mp4"]
+
+    parts = {}          # format_id -> {"done": bytes, "total": bytes}
+    order = []          # format ids in download order
+    speed = None        # smoothed bytes/s
+    last_emit = 0.0
+    finishing = False   # every stream downloaded, post-processing running
+
+    def emit(force=False):
+        nonlocal last_emit
+        now = time.monotonic()
+        if not force and now - last_emit < 0.25: return
+        last_emit = now
+        total = sum(p["total"] for p in parts.values())
+        done = sum(min(p["done"], p["total"]) if p["total"] else p["done"] for p in parts.values())
+        pct = min(99.9, done * 100 / total) if total else 0
+        eta = (total - done) / speed if speed and total > done else 0
+        active = next((i for i, f in enumerate(order) if parts[f]["done"] < parts[f]["total"]), len(order) - 1)
+        print(f"progress {pct:.1f} {int(done)} {int(total)} {int(speed or 0)} {int(eta)} {active + 1} {len(order)}", flush=True)
+
     p = subprocess.Popen(ytdlp(*args, url), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     last_err = ""
     for line in p.stdout:
         line = line.strip()
-        if line.startswith(("progress ", "done ")):
+        if line.startswith("parts "):
+            # Five JSON values separated by spaces; the lists contain spaces too.
+            values, rest, dec = [], line[6:].strip(), json.JSONDecoder()
+            try:
+                while rest and len(values) < 5:
+                    v, end = dec.raw_decode(rest)
+                    values.append(v)
+                    rest = rest[end:].lstrip()
+            except ValueError:
+                values += [None] * (5 - len(values))
+            if len(values) < 5: values += [None] * (5 - len(values))
+            ids, sizes, approx, single_id, single_size = values
+            if isinstance(ids, list) and ids:
+                for i, f in enumerate(ids):
+                    order.append(str(f))
+                    parts[str(f)] = {"done": 0, "total": (sizes[i] if isinstance(sizes, list) else 0)
+                                     or (approx[i] if isinstance(approx, list) else 0) or 0}
+            elif single_id not in (None, "NA"):
+                order.append(str(single_id))
+                parts[str(single_id)] = {"done": 0, "total": num(single_size) or 0}
+            emit(force=True)
+        elif line.startswith("progress "):
+            f, got, tot, est, spd, frag_i, frag_n = (line.split(" ") + ["NA"] * 8)[1:8]
+            if f not in parts:
+                order.append(f)
+                parts[f] = {"done": 0, "total": 0}
+            part = parts[f]
+            got, tot, est = num(got), num(tot), num(est)
+            if tot or est: part["total"] = tot or est
+            if got is not None:
+                part["done"] = got
+            elif num(frag_i) and num(frag_n) and part["total"]:
+                part["done"] = part["total"] * num(frag_i) / num(frag_n)
+            s_ = num(spd)
+            if s_: speed = s_ if speed is None else speed * 0.8 + s_ * 0.2
+            emit()
+            # yt-dlp stays quiet about post-processing, so announce it once every
+            # stream is in: merging two streams or converting audio takes a moment.
+            if not finishing and order and all(parts[x]["total"] and parts[x]["done"] >= parts[x]["total"] for x in order):
+                finishing = True
+                emit(force=True)
+                if quality == "audio": print("stage converting to mp3", flush=True)
+                elif len(order) > 1: print("stage merging video and audio", flush=True)
+                else: print("stage finishing the file", flush=True)
+        elif line.startswith("done "):
+            for part in parts.values(): part["done"] = part["total"] = max(part["done"], part["total"])
             print(re.sub(r"\s+", " ", line), flush=True)
         elif line.startswith("[Merger]"):
-            print("stage merging video + audio", flush=True)
+            print("stage merging video and audio", flush=True)
         elif line.startswith("[ExtractAudio]"):
             print("stage converting to mp3", flush=True)
+        elif line.startswith(("[FixupM3u8]", "[FixupM4a]", "[VideoConvertor]", "[VideoRemuxer]")):
+            print("stage finishing the file", flush=True)
         elif line.startswith("ERROR:"):
             last_err = line[6:].strip()
     if p.wait() != 0:

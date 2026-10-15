@@ -25,9 +25,17 @@ Panel {
   property string activeQuality: ""
   property string activeLabel: ""
   property real percent: 0
-  property string speed: ""
-  property string eta: ""
+  property real doneBytes: 0
+  property real totalBytes: 0
+  property real speedBytes: 0
+  property int etaSeconds: 0
+  property int part: 0
+  property int parts: 0
   property string stage: ""
+  // Animated copy of percent so the number and bar glide instead of jumping.
+  property real shownPercent: 0
+  Behavior on shownPercent { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+  onPercentChanged: shownPercent = percent
   property string doneFile: ""
 
   readonly property bool busy: status === "loading" || status === "downloading"
@@ -36,6 +44,17 @@ Panel {
     if (!bytes) return ""
     if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB"
     return Math.max(1, Math.round(bytes / 1048576)) + " MB"
+  }
+
+  function humanBytes(bytes) {
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + " GB"
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB"
+    return Math.round(bytes / 1024) + " KB"
+  }
+
+  function partName() {
+    if (parts < 2) return ""
+    return "part " + part + "/" + parts + " · " + (part === 1 ? "video" : "audio")
   }
 
   function humanTime(sec) {
@@ -89,7 +108,8 @@ Panel {
     var o = options[i]
     activeQuality = o.quality
     activeLabel = o.quality === "audio" ? "MP3" : o.label
-    percent = 0; speed = ""; eta = ""; stage = ""; doneFile = ""; errorText = ""
+    percent = 0; shownPercent = 0; doneBytes = 0; totalBytes = 0; speedBytes = 0; etaSeconds = 0
+    part = 0; parts = 0; stage = ""; doneFile = ""; errorText = ""
     status = "downloading"
     dlProc.command = ["python3", helper, "download", url, o.quality, outDir]
     dlProc.running = true
@@ -101,25 +121,29 @@ Panel {
   }
 
   function handleLine(line) {
-    var parts = String(line).trim().split(" ")
-    var kind = parts.shift()
+    var fields = String(line).trim().split(" ")
+    var kind = fields.shift()
     if (kind === "progress") {
-      var p = parseFloat(parts[0])
-      if (!isNaN(p)) percent = p
-      speed = parts[1] && parts[1] !== "N/A" && parts[1] !== "Unknown" ? parts[1] : ""
-      eta = parts[2] && parts[2] !== "N/A" && parts[2] !== "Unknown" ? parts[2] : ""
-      stage = ""
+      // progress <percent> <done bytes> <total bytes> <speed B/s> <eta s> <part> <parts>
+      var n = fields.map(Number)
+      if (!isNaN(n[0])) percent = n[0]
+      doneBytes = n[1] || 0
+      totalBytes = n[2] || 0
+      speedBytes = n[3] || 0
+      etaSeconds = n[4] || 0
+      root.part = n[5] || 0
+      root.parts = n[6] || 0
     } else if (kind === "stage") {
-      stage = parts.join(" ")
+      stage = fields.join(" ")
     } else if (kind === "done") {
-      doneFile = parts.join(" ")
+      doneFile = fields.join(" ")
       percent = 100
       status = "done"
       var name = doneFile.split("/").pop()
       Quickshell.execDetached(["notify-send", "-a", "Video Downloader", "-i", "folder-download", "Download finished", name])
     } else if (kind === "error") {
       status = "error"
-      errorText = parts.join(" ")
+      errorText = fields.join(" ")
       Quickshell.execDetached(["notify-send", "-a", "Video Downloader", "-u", "critical", "Download failed", errorText])
     }
   }
@@ -169,9 +193,24 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.status === "downloading" ? "󰇚 " + Math.floor(root.percent) + "%" : "󰇚"
-    tooltipText: root.status === "downloading" ? "Downloading " + root.activeLabel + " · " + Math.floor(root.percent) + "%" : "Video downloader"
+    text: "󰇚"
+    tooltipText: root.status === "downloading"
+      ? (root.stage !== "" ? root.stage : "Downloading " + root.activeLabel + " · " + root.shownPercent.toFixed(0) + "%")
+      : "Video downloader"
     onPressed: function(b) { root.toggle() }
+  }
+
+  // While downloading: the percentage under the icon and a thin bar along the bottom.
+  Text {
+    visible: root.status === "downloading"
+    anchors.horizontalCenter: button.horizontalCenter
+    anchors.bottom: button.bottom
+    anchors.bottomMargin: Style.space(1)
+    text: root.stage !== "" ? "···" : Math.floor(root.shownPercent) + "%"
+    color: Color.accent
+    font.family: root.bar.fontFamily
+    font.pixelSize: Style.font.caption - 3
+    font.bold: true
   }
 
   KeyboardPanel {
@@ -443,8 +482,9 @@ Panel {
               id: progressLabel
               anchors.left: parent.left
               text: root.status === "done" ? "󰄬  Saved " + root.activeLabel
-                  : root.stage !== "" ? root.stage + "…"
-                  : "Downloading " + root.activeLabel + "  ·  " + root.percent.toFixed(1) + "%"
+                  : root.stage !== "" ? "󰑓  " + root.stage.charAt(0).toUpperCase() + root.stage.slice(1) + "…"
+                  : root.totalBytes === 0 ? "Starting " + root.activeLabel + "…"
+                  : "Downloading " + root.activeLabel
               color: root.status === "done" ? "#a6da95" : root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
@@ -452,25 +492,65 @@ Panel {
             }
             Text {
               anchors.right: parent.right
-              visible: root.status === "downloading" && root.stage === ""
-              text: [root.speed, root.eta ? root.eta + " left" : ""].filter(function(s) { return s }).join("  ·  ")
-              color: Qt.darker(root.bar.foreground, 1.5)
+              anchors.verticalCenter: progressLabel.verticalCenter
+              text: root.status === "done" ? "100%" : root.shownPercent.toFixed(1) + "%"
+              color: root.status === "done" ? "#a6da95" : Color.accent
               font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: Style.font.title
+              font.bold: true
             }
           }
 
           Rectangle {
+            id: track
             width: parent.width
-            height: Style.space(6)
+            height: Style.space(8)
             radius: height / 2
+            clip: true
             color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
             Rectangle {
-              width: parent.width * Math.min(1, root.percent / 100)
+              width: parent.width * Math.min(1, (root.status === "done" ? 100 : root.shownPercent) / 100)
               height: parent.height
               radius: parent.radius
               color: root.status === "done" ? "#a6da95" : Color.accent
-              Behavior on width { NumberAnimation { duration: 200 } }
+            }
+            // Moving highlight while merging / converting, when there are no bytes to count.
+            Rectangle {
+              id: shimmer
+              visible: root.status === "downloading" && root.stage !== ""
+              width: parent.width * 0.3
+              height: parent.height
+              radius: parent.radius
+              color: Qt.rgba(1, 1, 1, 0.35)
+              NumberAnimation on x {
+                running: shimmer.visible
+                from: -track.width * 0.3; to: track.width
+                duration: 1100; loops: Animation.Infinite
+              }
+            }
+          }
+
+          Item {
+            visible: root.status === "downloading" && root.stage === "" && root.totalBytes > 0
+            width: parent.width
+            implicitHeight: bytesLabel.implicitHeight
+            Text {
+              id: bytesLabel
+              anchors.left: parent.left
+              text: root.humanBytes(root.doneBytes) + " / " + root.humanBytes(root.totalBytes)
+                    + (root.partName() ? "   ·   " + root.partName() : "")
+              color: Qt.darker(root.bar.foreground, 1.3)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+            Text {
+              anchors.right: parent.right
+              text: [root.speedBytes > 0 ? root.humanBytes(root.speedBytes) + "/s" : "",
+                     root.etaSeconds > 0 ? root.humanTime(root.etaSeconds) + " left" : ""]
+                    .filter(function(s) { return s }).join("  ·  ")
+              color: Qt.darker(root.bar.foreground, 1.3)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 

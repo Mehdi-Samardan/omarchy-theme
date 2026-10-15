@@ -77,7 +77,7 @@ A download icon on the right of the bar. Click it, paste a link and pick a resol
 
 - If your clipboard already holds a link, it's filled in when the panel opens.
 - Shows the title, thumbnail, channel and length, then every available resolution with an estimated size (4K, 2K, Full HD, HD …), plus **Audio only (MP3)**.
-- Click a resolution, or use the arrow keys and Enter. A progress bar shows speed and time left; **Cancel** stops it.
+- Click a resolution, or use the arrow keys and Enter. The progress counts video and audio together in bytes, so it climbs once from 0 to 100% and shows MB downloaded / total, which part is downloading, the speed and the time left. Merging or converting at the end gets its own animated step. **Cancel** stops it.
 - Downloads keep running when the panel is closed; the bar icon shows the percentage. A notification fires when it's done, with **Play**, **Open folder** and **Download another** buttons in the panel.
 - Saves to `~/Videos/Downloads`. Works with YouTube, X, Instagram, TikTok and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports. Needs `yt-dlp` and `ffmpeg` (`omarchy pkg add yt-dlp ffmpeg`).
 
