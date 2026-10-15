@@ -4,8 +4,8 @@
 #   downloader.py info <url> [<dir>]
 #       Prints one JSON line. For a single video: title, uploader, duration,
 #       thumbnail, the heights on offer (best fps, bitrate and an estimated
-#       size for each), the best audio, the subtitle languages, the free space
-#       in <dir>, and "extra": yt-dlp options the site needed (browser
+#       size for each), the best audio, the free space in <dir>, and "extra":
+#       yt-dlp options the site needed (browser
 #       cookies, browser impersonation). For a playlist or channel:
 #       {"playlist": true, title, uploader, count, entries: [{url, title, ...}]}.
 #       On failure {"error": "...", "outdated": <days>} (outdated only when an
@@ -16,8 +16,11 @@
 #       best = highest resolution and bitrate, <height> = the highest-bitrate
 #       stream at that height, mp3 = 320 kbps MP3, audio = the original audio
 #       track without re-encoding. <extra JSON> is the "extra" list from info.
-#       <options JSON>: {"subs": ["tr", "en"], "rate": "5M"} saves those
-#       subtitles as separate .srt files next to the video and caps the speed.
+#       <options JSON>: {"rate": "5M"} caps the speed.
+#
+#       Audio is always the original-language track: YouTube adds auto-dubbed
+#       tracks, and those often report a higher bitrate, so "highest bitrate"
+#       alone would pick a dub.
 #
 #   downloader.py shrink <file> <megabytes|gif>
 #       Re-encodes a finished download to fit a size (Discord, WhatsApp, ...)
@@ -175,7 +178,9 @@ def info(url, outdir=None):
     is_video = lambda f: f.get("vcodec") != "none" and not (f.get("vcodec") is None and f.get("acodec") not in (None, "none") and not f.get("height"))
 
     audios = [f for f in fmts if is_audio(f)]
-    best_audio = max(audios, key=lambda f: (f.get("abr") or f.get("tbr") or 0, size(f)), default=None)
+    original = lambda f: (f.get("language_preference") or 0) >= 10 or "original" in (f.get("format_note") or "")
+    best_audio = max(audios, key=lambda f: (original(f), f.get("abr") or f.get("tbr") or 0, size(f)), default=None)
+
     audio_size = size(best_audio) if best_audio else 0
 
     heights = {}
@@ -189,10 +194,6 @@ def info(url, outdir=None):
                           "size": size(f) + (audio_size if f.get("acodec") in (None, "none") and best_audio else 0)}
     known = [heights[h] for h in sorted(heights, reverse=True) if h]
 
-    # Subtitles: every manual track, plus auto-generated ones (the widget shows
-    # the auto tracks for your languages and the original-language one).
-    subs = sorted(k for k in (d.get("subtitles") or {}) if k != "live_chat")
-    auto = sorted(k for k in (d.get("automatic_captions") or {}))
     print(json.dumps({
         "title": d.get("title") or url,
         "uploader": d.get("uploader") or d.get("channel") or d.get("extractor_key") or "",
@@ -203,9 +204,6 @@ def info(url, outdir=None):
         "best": known[0] if known else heights.get(0),
         "audio": {"codec": (best_audio or {}).get("acodec", "").split(".")[0], "kbps": round((best_audio or {}).get("abr") or 0),
                   "size": audio_size} if best_audio or not heights else None,
-        "subtitles": subs,
-        "autoSubtitles": [k for k in auto if k.endswith("-orig")] + [k for k in auto if not k.endswith("-orig")],
-        "language": d.get("language") or "",
         "freeBytes": free_bytes(outdir),
         "extra": extra,
     }))
@@ -237,21 +235,18 @@ def download(url, quality, outdir, workdir=None, extra=None, options=None):
     # Parallel fragments speed up HLS sites (X, Instagram, ...); YouTube answers them with 403.
     if not re.search(r"(youtube\.com|youtu\.be)/", url):
         args += ["--concurrent-fragments", "4"]
-    # Highest bitrate first: at a given height prefer more fps, then more bits.
+    # "lang" first keeps the original-language audio over auto-dubbed tracks;
+    # after that the highest bitrate wins (more fps, then more bits per height).
     if quality == "mp3":
-        args += ["-f", "ba/b", "-S", "abr,asr", "-x", "--audio-format", "mp3", "--audio-quality", "320K"]
+        args += ["-f", "ba/b", "-S", "lang,abr,asr", "-x", "--audio-format", "mp3", "--audio-quality", "320K"]
     elif quality == "audio":
-        args += ["-f", "ba/b", "-S", "abr,asr", "-x"]          # original codec, no re-encode
+        args += ["-f", "ba/b", "-S", "lang,abr,asr", "-x"]          # original codec, no re-encode
     elif quality == "best":
-        args += ["-f", "bv*+ba/b", "-S", "res,fps,vbr,abr,asr", "--merge-output-format", "mp4"]
+        args += ["-f", "bv*+ba/b", "-S", "lang,res,fps,vbr,abr,asr", "--merge-output-format", "mp4"]
     else:
         h = int(quality)
-        args += ["-f", f"bv*[height<={h}]+ba/b[height<={h}]/b", "-S", f"res:{h},fps,vbr,abr,asr",
+        args += ["-f", f"bv*[height<={h}]+ba/b[height<={h}]/b", "-S", f"lang,res:{h},fps,vbr,abr,asr",
                  "--merge-output-format", "mp4"]
-    # Subtitles as separate .srt files next to the video (manual ones win over auto).
-    subs = [s for s in options.get("subs") or [] if re.fullmatch(r"[\w-]+", s)]
-    if subs and quality not in ("mp3", "audio"):
-        args += ["--write-subs", "--write-auto-subs", "--sub-langs", ",".join(subs), "--convert-subs", "srt"]
     if options.get("rate") and re.fullmatch(r"\d+(\.\d+)?[KMG]?", str(options["rate"])):
         args += ["--limit-rate", str(options["rate"])]
     # Cover art: ffmpeg handles mp4/mp3/m4a; Opus/Ogg/WebM need mutagen.

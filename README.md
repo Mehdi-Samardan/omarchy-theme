@@ -81,7 +81,7 @@ A download icon on the right of the bar. Click it, paste a link and pick a quali
   - **Best**: the highest resolution and bitrate the site has.
   - **Each resolution** (e.g. `1080p60 · 7.4 Mbps · ~600 MB`): the highest-bitrate stream at that height, saved as MP4.
   - **MP3** at 320 kbps, or **Original**: the site's own audio track, without re-encoding.
-- **Subtitles:** pick languages and they're saved as separate `.srt` files next to the video. Your languages (set in Settings) come first, including auto-generated ones.
+- **Audio language:** always the video's original language. YouTube adds auto-dubbed tracks, and they often report a higher bitrate, so the original track is picked first on purpose, never a dub.
 - Files get the title, channel, date and chapters embedded, and the thumbnail as cover art.
 
 **Playlists and channels**
@@ -97,7 +97,7 @@ A download icon on the right of the bar. Click it, paste a link and pick a quali
 - The list survives restarts and logouts; paused downloads can be resumed later, and moved or deleted files are marked.
 - Downloads keep running when the panel is closed. The bar icon shows the overall percentage, the list header the total speed, and a notification fires when each one finishes.
 
-**Settings** (gear icon): save folder, downloads at once (1 to 5), default quality, speed limit per download, subtitle languages, and the yt-dlp version.
+**Settings** (gear icon): save folder, downloads at once (1 to 5), default quality, speed limit per download, and the yt-dlp version.
 
 **When something fails**, the error is in plain words (private video, age-restricted, not available in your country, …). When an old yt-dlp is the likely cause, the card offers an **Update** button that runs `omarchy update` in a terminal.
 

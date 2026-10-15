@@ -8,8 +8,8 @@ import qs.Commons
 // through downloader.py.
 //
 // - A video offers Best (highest resolution and bitrate), each height (highest
-//   bitrate at that height), MP3 320 kbps or the original audio, plus subtitle
-//   languages saved as separate .srt files.
+//   bitrate at that height), MP3 320 kbps or the original audio. The audio is
+//   always the video's original language, never an auto-dubbed track.
 // - A playlist or channel lists its videos to tick, then downloads them all in
 //   one quality.
 // - Every download is a card with its thumbnail, progress, speed and time left;
@@ -18,8 +18,8 @@ import qs.Commons
 // - Warns before re-downloading something you already have, or a download that
 //   won't fit on the disk, and offers a yt-dlp update when an old one is the
 //   likely cause of a failure.
-// - Settings (folder, parallel downloads, default quality, speed limit,
-//   subtitle languages) and the download list are saved and survive restarts.
+// - Settings (folder, parallel downloads, default quality, speed limit) and the
+//   download list are saved and survive restarts.
 Panel {
   id: root
   moduleName: "mehdi.downloader"
@@ -41,7 +41,7 @@ Panel {
 
   // ---------- Settings ----------
   readonly property string defaultFolder: (Quickshell.env("XDG_VIDEOS_DIR") || home + "/Videos") + "/Downloads"
-  property var settings: ({ folder: defaultFolder, maxParallel: 3, defaultQuality: "best", rate: "", subLangs: ["tr", "en"] })
+  property var settings: ({ folder: defaultFolder, maxParallel: 3, defaultQuality: "best", rate: "" })
   readonly property string outDir: settings.folder || defaultFolder
   readonly property int maxParallel: settings.maxParallel || 3
 
@@ -77,8 +77,6 @@ Panel {
   property var playlist: null            // playlist / channel
   property var options: []               // [{ quality, label, tag, detail, badge, audio, size }]
   property int selectedIndex: 0
-  property var subChoices: []            // [{ code, label, auto }]
-  property var subSelected: []           // codes
   property var picked: []                // playlist: selected entry indexes
   property string playlistQuality: "best"
 
@@ -175,22 +173,13 @@ Panel {
     return ""
   }
 
-  readonly property var languageNames: ({
-    tr: "Türkçe", en: "English", de: "Deutsch", fr: "Français", es: "Español", it: "Italiano", nl: "Nederlands",
-    pt: "Português", ru: "Русский", ar: "العربية", fa: "فارسی", ja: "日本語", ko: "한국어", zh: "中文", az: "Azərbaycan"
-  })
-  function languageLabel(code) {
-    var base = code.replace(/-orig$/, "").split("-")[0]
-    return (languageNames[base] || code.toUpperCase()) + (code.indexOf("-orig") > 0 ? " (auto)" : "")
-  }
-
   // ---------- Lookup ----------
   function fetchInfo() {
     var u = urlField.text.trim()
     if (!/^https?:\/\//i.test(u)) { lookupStatus = "error"; lookupError = "Paste a link that starts with http:// or https://"; lookupOutdated = 0; return }
     if (infoProc.running) infoProc.running = false
     url = u
-    info = null; playlist = null; options = []; subChoices = []; subSelected = []; picked = []; confirm = null
+    info = null; playlist = null; options = []; picked = []; confirm = null
     lookupStatus = "loading"
     infoProc.command = ["python3", helper, "info", u, outDir]
     infoProc.running = true
@@ -199,7 +188,7 @@ Panel {
   function resetLookup() {
     if (infoProc.running) infoProc.running = false
     lookupStatus = "idle"; lookupError = ""; lookupOutdated = 0; url = ""
-    info = null; playlist = null; options = []; selectedIndex = 0; subChoices = []; subSelected = []; picked = []; confirm = null
+    info = null; playlist = null; options = []; selectedIndex = 0; picked = []; confirm = null
     urlField.text = ""
   }
 
@@ -251,42 +240,11 @@ Panel {
                   badge: "AUDIO", audio: true, size: d.audio.size || 0 })
     }
 
-    // Subtitles: every manual track, plus the auto ones in your languages or the original language.
-    var langs = (settings.subLangs || []).map(function(l) { return l.toLowerCase() })
-    var choices = [], seen = {}
-    function base(c) { return c.replace(/-orig$/, "").split("-")[0].toLowerCase() }
-    for (var m = 0; m < (d.subtitles || []).length; m++) {
-      var c = d.subtitles[m]
-      if (seen[base(c)]) continue
-      seen[base(c)] = true
-      choices.push({ code: c, label: languageLabel(c), auto: false })
-    }
-    for (var a = 0; a < (d.autoSubtitles || []).length; a++) {
-      var ac = d.autoSubtitles[a]
-      if (seen[base(ac)]) continue
-      if (ac.indexOf("-orig") < 0 && langs.indexOf(base(ac)) < 0) continue
-      seen[base(ac)] = true
-      choices.push({ code: ac, label: languageLabel(ac) + (ac.indexOf("-orig") < 0 ? " (auto)" : ""), auto: true })
-    }
-    // Your languages first.
-    choices.sort(function(x, y) {
-      var ix = langs.indexOf(base(x.code)), iy = langs.indexOf(base(y.code))
-      return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)
-    })
-
     info = d
     options = opts
-    subChoices = choices
-    subSelected = []
     selectedIndex = defaultIndex(opts)
     lookupStatus = "ready"
     keyCatcher.forceActiveFocus()
-  }
-
-  function toggleSub(code) {
-    var s = subSelected.slice(), i = s.indexOf(code)
-    if (i >= 0) s.splice(i, 1); else s.push(code)
-    subSelected = s
   }
 
   function togglePick(i) {
@@ -337,8 +295,7 @@ Panel {
     }
     confirm = null
     newJob({ kind: "download", url: url, title: info.title, uploader: info.uploader, thumbnail: info.thumbnail,
-             quality: o.quality, label: o.badge, extra: info.extra || [],
-             subs: o.audio ? [] : subSelected.slice(), rateLimit: settings.rate || "" })
+             quality: o.quality, label: o.badge, extra: info.extra || [], rateLimit: settings.rate || "" })
     pumpQueue()
   }
 
@@ -351,7 +308,7 @@ Panel {
       if (!e || isQueuedOrRunning(e.url, playlistQuality) || existingJob(e.url, playlistQuality)) { skipped++; continue }
       newJob({ kind: "download", url: e.url, title: e.title, uploader: e.uploader || playlist.uploader,
                thumbnail: e.thumbnail, quality: playlistQuality, label: label, extra: playlist.extra || [],
-               subs: [], rateLimit: settings.rate || "" })
+               rateLimit: settings.rate || "" })
       added++
     }
     pumpQueue()
@@ -406,7 +363,7 @@ Panel {
   }
 
   // ---------- History: finished and paused downloads survive restarts ----------
-  readonly property var savedFields: ["kind", "url", "title", "uploader", "thumbnail", "quality", "label", "extra", "subs",
+  readonly property var savedFields: ["kind", "url", "title", "uploader", "thumbnail", "quality", "label", "extra",
                                       "rateLimit", "source", "workDir", "outDir", "phase", "file", "error",
                                       "totalBytes", "doneBytes", "percent", "finishedAt"]
 
@@ -494,7 +451,6 @@ Panel {
       property string quality: ""
       property string label: ""
       property var extra: []
-      property var subs: []
       property string rateLimit: ""
       property string source: ""            // shrink: the file to re-encode
       property string workDir: ""
@@ -530,7 +486,7 @@ Panel {
           proc.command = ["python3", root.helper, "shrink", source, quality]
         } else {
           proc.command = ["python3", root.helper, "download", url, quality, outDir || root.outDir, workDir,
-                          JSON.stringify(extra || []), JSON.stringify({ subs: subs || [], rate: rateLimit || "" })]
+                          JSON.stringify(extra || []), JSON.stringify({ rate: rateLimit || "" })]
         }
         proc.running = true
       }
@@ -645,7 +601,7 @@ Panel {
 
   // ---------- Reusable pieces ----------
 
-  // A selectable tile: quality, subtitle language, setting value.
+  // A selectable tile: quality or setting value.
   component Chip: Rectangle {
     id: chip
     property string text: ""
@@ -781,7 +737,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: urlField.activeFocus || folderField.activeFocus || langField.activeFocus
+      blocked: urlField.activeFocus || folderField.activeFocus
       onMoveRequested: function(dx, dy) {
         if (root.lookupStatus !== "ready" || !root.info || root.showSettings) return
         var cols = 3, n = root.options.length, i = root.selectedIndex
@@ -939,31 +895,6 @@ Panel {
                   onClicked: root.setSetting("rate", modelData[0])
                 }
               }
-            }
-          }
-
-          Column {
-            width: parent.width
-            spacing: Style.space(6)
-            SectionLabel { text: "SUBTITLE LANGUAGES" }
-            TextField {
-              id: langField
-              width: parent.width
-              text: (root.settings.subLangs || []).join(", ")
-              placeholderText: "tr, en"
-              foreground: root.fg
-              font.family: root.bar.fontFamily
-              selectByMouse: true
-              onEditingFinished: root.setSetting("subLangs", text.split(/[\s,]+/).map(function(s) { return s.trim().toLowerCase() })
-                                                                  .filter(function(s) { return /^[a-z]{2,3}$/.test(s) }))
-            }
-            Text {
-              width: parent.width
-              text: "Language codes, first is preferred. Offered when a video has them, saved as .srt next to the video."
-              color: root.dimText
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.Wrap
             }
           }
 
@@ -1134,29 +1065,6 @@ Panel {
               muted: root.isQueuedOrRunning(root.url, modelData.quality)
               onHoveredIn: root.selectedIndex = index
               onClicked: root.requestDownload(index, false)
-            }
-          }
-        }
-
-        // Subtitles for the next download (videos only).
-        Column {
-          visible: !root.showSettings && root.lookupStatus === "ready" && root.info !== null && root.subChoices.length > 0
-          width: parent.width
-          spacing: Style.space(6)
-          SectionLabel { text: "SUBTITLES  ·  SAVED AS .SRT" + (root.subSelected.length ? "  ·  " + root.subSelected.length + " SELECTED" : "") }
-          Flow {
-            width: parent.width
-            spacing: Style.space(6)
-            Repeater {
-              model: root.subChoices
-              Chip {
-                required property var modelData
-                compact: true
-                width: Math.max(Style.space(70), modelData.label.length * Style.space(8) + Style.space(26))
-                text: (root.subSelected.indexOf(modelData.code) >= 0 ? "󰄬 " : "") + modelData.label
-                selected: root.subSelected.indexOf(modelData.code) >= 0
-                onClicked: root.toggleSub(modelData.code)
-              }
             }
           }
         }
@@ -1564,9 +1472,8 @@ Panel {
                             if (j.phase === "cancelled") return "Cancelled"
                             if (j.phase === "error") return j.error
                             if (j.phase === "done") return j.missing ? "File moved or deleted"
-                                                     : [j.totalBytes > 0 ? root.humanBytes(j.totalBytes) : "",
-                                                        j.subs && j.subs.length ? j.subs.length + (j.subs.length === 1 ? " subtitle" : " subtitles") : "",
-                                                        "Saved"].filter(function(s) { return s }).join("  ·  ")
+                                                     : [j.totalBytes > 0 ? root.humanBytes(j.totalBytes) : "", "Saved"]
+                                                       .filter(function(s) { return s }).join("  ·  ")
                             if (j.kind === "shrink") return j.label === "GIF" ? "Making the GIF…" : "Encoding to fit " + j.label + "…"
                             if (j.phase === "finishing") return j.stage.charAt(0).toUpperCase() + j.stage.slice(1) + "…"
                             if (j.totalBytes === 0) return "Starting…"
