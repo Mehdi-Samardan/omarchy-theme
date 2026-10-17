@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "mehdi.downloader",
+  "name": "Video Downloader",
+  "version": "1.0.0",
+  "author": "mehdi",
+  "description": "Paste a link, pick a resolution (or mp3) and download it with yt-dlp",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Video Downloader",
+    "description": "Paste a link, pick a resolution (or mp3) and download it with yt-dlp",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
